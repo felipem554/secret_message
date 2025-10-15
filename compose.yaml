@@ -1,0 +1,61 @@
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+    ports:
+      - "8080:8080"
+    networks:
+      - nats
+    depends_on:
+      - redis
+      - nats
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      NATS_URL: nats://nats:4222
+
+#  test:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#      target: test
+#    depends_on:
+#      - redis
+#      - nats
+#    environment:
+#      REDIS_HOST: redis
+#      REDIS_PORT: 6379
+#      NATS_URL: nats://nats:4222
+#    networks:
+#      - nats
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    networks:
+      - nats
+
+  nats:
+    image: "nats:latest"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - nats
+    command: ["-DV", "--http_port", "8222", "--trace"]
+
+  nats-box:
+    image: synadia/nats-box
+    depends_on:
+      - nats
+    networks:
+      - nats
+    tty: true # Keep the container running
+
+networks:
+  nats:
