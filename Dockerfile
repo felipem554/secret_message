@@ -6,10 +6,13 @@ FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /app
 
 # Copy the gradle wrapper and gradle configuration files
-COPY --chmod=0755 gradlew gradlew
-COPY gradle/ gradle/
+COPY gradlew .
+COPY gradle gradle
+RUN chmod +x gradlew
+
 COPY build.gradle settings.gradle ./
-COPY src/ src/
+COPY src src
+
 RUN ./gradlew build -x test --no-daemon
 
 # Test stage
