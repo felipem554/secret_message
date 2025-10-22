@@ -8,15 +8,17 @@ services:
       target: final
     ports:
       - "8080:8080"
+      - "5005:5005"
     networks:
       - nats
     depends_on:
       - redis
       - nats
     environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      NATS_URL: nats://nats:4222
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      NATS_URL: ${NATS_URL}
+      DEBUG: ${DEBUG:-false}
 
 #  test:
 #    build:
