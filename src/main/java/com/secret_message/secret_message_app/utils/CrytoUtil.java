@@ -26,6 +26,7 @@ public class CrytoUtil {
     private static final SecureRandom secureRandom = new SecureRandom();
 
     public String encryptMessage(String content, SecretKey aesKey) throws Exception {
+
         byte[] iv = new byte[IV_LENGTH];
         secureRandom.nextBytes(iv);
         IvParameterSpec ivSpec = new IvParameterSpec(iv);

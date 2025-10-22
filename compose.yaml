@@ -15,8 +15,8 @@ services:
       - redis
       - nats
     environment:
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
+      SPRING_REDIS_HOST: ${REDIS_HOST}
+      SPRING_REDIS_PORT: ${REDIS_PORT}
       NATS_URL: ${NATS_URL}
       DEBUG: ${DEBUG:-false}
 

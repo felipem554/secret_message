@@ -50,16 +50,13 @@ public class NatsService {
 
     public void createSecretMessageSubscriber(Message msg) {
         try {
-            System.out.println("Bug founded!");
             String secretMessage = new String(msg.getData());
             if (msg.getReplyTo() != null && !secretMessage.isEmpty()) {
                 try {
                     SecretMessageIdentifier secretMessageIdentifier =
                             secretMessageService.createSecretMessage(secretMessage);
 
-//                    byte[] response = mapper.writeValueAsBytes(secretMessageIdentifier);
-                    byte[] response = mapper.writeValueAsBytes("haaaa fdppppppx");
-
+                    byte[] response = mapper.writeValueAsBytes(secretMessageIdentifier);
                     System.out.println("Replying to: " + msg.getReplyTo());
 
                     natsConnection.publish(msg.getReplyTo(), response);
