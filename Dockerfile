@@ -38,6 +38,15 @@ USER appuser
 
 COPY --from=build /app/build/libs/*.jar app.jar
 
-EXPOSE 8080 5005
-ENTRYPOINT ["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005", "-jar", "app.jar"]
+# Only expose port 8080 for production
+# For debugging, set DEBUG=true environment variable and map port 5005
+EXPOSE 8080
+
+# Use a shell script to conditionally enable debug mode
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+USER root
+RUN chmod +x /docker-entrypoint.sh
+USER appuser
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
