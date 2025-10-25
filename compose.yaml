@@ -8,6 +8,7 @@ services:
       target: final
     ports:
       - "8080:8080"
+      # Uncomment the line below and set DEBUG=true to enable remote debugging
       - "5005:5005"
     networks:
       - nats
@@ -17,7 +18,10 @@ services:
     environment:
       SPRING_REDIS_HOST: ${REDIS_HOST}
       SPRING_REDIS_PORT: ${REDIS_PORT}
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
       NATS_URL: ${NATS_URL}
+      NATS_USER: ${NATS_USER:-natsuser}
+      NATS_PASS: ${NATS_PASS:-natspassword}
       DEBUG: ${DEBUG:-false}
 
 #  test:
@@ -41,6 +45,9 @@ services:
       - "6379:6379"
     networks:
       - nats
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword}
 
   nats:
     image: "nats:latest"
@@ -49,7 +56,10 @@ services:
       - "8222:8222"
     networks:
       - nats
-    command: ["-DV", "--http_port", "8222", "--trace"]
+    environment:
+      NATS_USER: ${NATS_USER:-natsuser}
+      NATS_PASS: ${NATS_PASS:-natspassword}
+    command: ["-DV", "--http_port", "8222", "--trace", "--user", "$NATS_USER", "--pass", "$NATS_PASS"]
 
   nats-box:
     image: synadia/nats-box

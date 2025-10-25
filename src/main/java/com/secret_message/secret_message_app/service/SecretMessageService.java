@@ -2,7 +2,7 @@ package com.secret_message.secret_message_app.service;
 
 import com.secret_message.secret_message_app.cache.RedisCacheManager;
 import com.secret_message.secret_message_app.model.SecretMessageIdentifier;
-import com.secret_message.secret_message_app.utils.CrytoUtil;
+import com.secret_message.secret_message_app.utils.CryptoUtil;
 import com.secret_message.secret_message_app.utils.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +26,7 @@ public class SecretMessageService {
     private RedisCacheManager redisCacheManager;
 
     @Autowired
-    private CrytoUtil crytoUtil;
+    private CryptoUtil cryptoUtil;
 
     @Autowired
     private PasswordGenerator passwordGenerator;
@@ -36,12 +36,12 @@ public class SecretMessageService {
 
 
     public SecretMessageIdentifier createSecretMessage(String secretMessage) {
-        String password = passwordGenerator.generateRandomPassword(passwordLength);
         String messageId = UUID.randomUUID().toString();
 
         try {
-            SecretKey secretKey = crytoUtil.deriveKeyFromPassword(password);
-            String encryptedMessage = crytoUtil.encryptMessage(secretMessage, secretKey);
+            // Generate a random AES key instead of deriving from password
+            SecretKey secretKey = cryptoUtil.generateRandomAESKey();
+            String encryptedMessage = cryptoUtil.encryptMessage(secretMessage, secretKey);
 
             redisCacheManager.storeEncryptedMessage(messageId, encryptedMessage);
 
@@ -61,7 +61,7 @@ public class SecretMessageService {
         }
         try {
             String encryptedMessage = redisCacheManager.getEncryptedMessageById(messageId);
-            String decryptedMessage = crytoUtil.decryptMessage(encryptedMessage, aesKey);
+            String decryptedMessage = cryptoUtil.decryptMessage(encryptedMessage, aesKey);
 
             // Message being deleted after successful decryption
             redisCacheManager.deleteEncryptedMessage(messageId);

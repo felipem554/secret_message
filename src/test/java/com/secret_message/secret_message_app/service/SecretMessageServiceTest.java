@@ -3,7 +3,7 @@ package com.secret_message.secret_message_app.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.secret_message.secret_message_app.cache.RedisCacheManager;
 import com.secret_message.secret_message_app.model.SecretMessageIdentifier;
-import com.secret_message.secret_message_app.utils.CrytoUtil;
+import com.secret_message.secret_message_app.utils.CryptoUtil;
 import com.secret_message.secret_message_app.utils.PasswordGenerator;
 import io.nats.client.Connection;
 import io.nats.client.Nats;
@@ -60,7 +60,7 @@ class SecretMessageServiceTest {
     private RedisCacheManager redisCacheManager;
 
     @Autowired
-    private CrytoUtil crytoUtil;
+    private CryptoUtil cryptoUtil;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -98,7 +98,7 @@ class SecretMessageServiceTest {
         assertNotNull(identifier.getMessageId());
         assertNotNull(identifier.getSecretKey());
 
-        String expectedEncryptedMessage = crytoUtil.encryptMessage(secretMessage, identifier.getSecretKey());
+        String expectedEncryptedMessage = cryptoUtil.encryptMessage(secretMessage, identifier.getSecretKey());
 
         // Verify the message is stored in Redis
         String encryptedMessage = redisCacheManager.getEncryptedMessageById(identifier.getMessageId());
@@ -106,8 +106,76 @@ class SecretMessageServiceTest {
         assertEquals(expectedEncryptedMessage, encryptedMessage);
     }
 
-    //TODO
-    //createAndGetSecretMessageTest
+    @Test
+    void createAndGetSecretMessageTest() throws Exception {
+        // Given: A secret message to encrypt
+        String originalMessage = "This is a top secret message that should be encrypted!";
+        
+        // When: Creating a secret message
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
+        
+        // Then: Verify the identifier is created properly
+        assertNotNull(identifier.getMessageId(), "Message ID should not be null");
+        assertNotNull(identifier.getSecretKey(), "Secret key should not be null");
+        assertNotNull(identifier.getAeskey(), "AES key string should not be null");
+        assertFalse(identifier.getMessageId().isEmpty(), "Message ID should not be empty");
+        assertFalse(identifier.getAeskey().isEmpty(), "AES key string should not be empty");
+        
+        // And: Verify the message is stored in Redis with correct key
+        String encryptedMessage = redisCacheManager.getEncryptedMessageById(identifier.getMessageId());
+        assertNotNull(encryptedMessage, "Encrypted message should be stored in Redis");
+        assertFalse(encryptedMessage.isEmpty(), "Encrypted message should not be empty");
+        
+        // When: Retrieving the secret message with the correct key
+        String decryptedMessage = secretMessageService.getEncryptedMessageById(
+            identifier.getMessageId(), 
+            identifier.getAeskey()
+        );
+        
+        // Then: Verify the decrypted message matches the original
+        assertEquals(originalMessage, decryptedMessage, "Decrypted message should match original");
+        
+        // And: Verify the message is deleted after successful retrieval
+        String deletedMessage = redisCacheManager.getEncryptedMessageById(identifier.getMessageId());
+        assertNull(deletedMessage, "Message should be deleted from Redis after retrieval");
+    }
+    
+    @Test
+    void getSecretMessageWithWrongKeyTest() throws Exception {
+        // Given: A secret message
+        String originalMessage = "Secret message with wrong key test";
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
+        
+        // When: Attempting to retrieve with a wrong key
+        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng=="; // Base64 encoded dummy key
+        
+        // Then: Should throw an exception
+        assertThrows(Exception.class, () -> {
+            secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
+        }, "Should throw exception when using wrong key");
+    }
+    
+    @Test
+    void maxAttemptsTest() throws Exception {
+        // Given: A secret message
+        String originalMessage = "Message with max attempts test";
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
+        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+        
+        // When: Attempting retrieval multiple times with wrong key (max tries is 3)
+        for (int i = 0; i < 3; i++) {
+            try {
+                secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
+            } catch (Exception e) {
+                // Expected to fail with wrong key
+            }
+        }
+        
+        // Then: The message should be deleted after max attempts
+        String result = secretMessageService.getEncryptedMessageById(identifier.getMessageId(), identifier.getAeskey());
+        assertEquals("Maximum attempts reached, the message has been deleted.", result, 
+            "Should return max attempts message after exceeding limit");
+    }
 
     @Configuration
     static class TestConfig {
@@ -132,8 +200,8 @@ class SecretMessageServiceTest {
         }
 
         @Bean
-        public CrytoUtil crytoUtil() {
-            return new CrytoUtil();
+        public CryptoUtil cryptoUtil() {
+            return new CryptoUtil();
         }
 
         @Bean

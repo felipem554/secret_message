@@ -37,7 +37,7 @@ public class RedisCacheManager {
     }
 
     public String getEncryptedMessageById(String messageId) {
-        return redisTemplate.opsForValue().get(messageId);
+        return redisTemplate.opsForValue().get(buildMessageKey(messageId));
     }
 
     public void deleteEncryptedMessage(String messageId) {
