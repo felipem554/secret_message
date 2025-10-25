@@ -1,6 +1,5 @@
 #!/bin/sh
 
-# Conditional debug mode for Java application
 # Set DEBUG=true environment variable to enable remote debugging on port 5005
 
 if [ "$DEBUG" = "true" ]; then
