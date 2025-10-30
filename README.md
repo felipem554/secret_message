@@ -2,12 +2,6 @@
 
 A secure, production-ready service for sharing encrypted messages that automatically self-destruct after being read. Built with Spring Boot, Redis, and NATS messaging.
 
-<img src="https://upload.wikimedia.org/wikipedia/en/thumb/3/30/Java_programming_language_logo.svg/656px-Java_programming_language_logo.svg.png" alt="Java" width="50"> 
-<img src="https://i.ytimg.com/vi/4cgpu9L2AE8/maxresdefault.jpg" alt="Spring Boot" width="200"> 
-<img src="https://i.pinimg.com/736x/14/ab/5a/14ab5a2aee25fb25e673b10ffe6b7d84.jpg" alt="Redis" width="100"> 
-<img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSCEkyMeR4hlWVlKrz22u0cnzP8paUGgildGiKnVQxTbmCLSUP97zgwAcIcofQ7DJ0H7w" alt="NATS" width="300"> 
-<img src="https://pbs.twimg.com/media/EIc4Y5LWkAI1Pnd?format=jpg&name=medium" alt="Docker" width="200">
-
 ## 📋 Table of Contents
 
 - [Overview](#overview)
