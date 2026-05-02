@@ -45,9 +45,12 @@ public class RedisCacheManager {
     }
 
     public boolean incrementAndCheckAttempt(String messageId) {
-        Long attempts = redisTemplate.opsForValue().increment(buildAttemptKey(messageId));
+        String attemptKey = buildAttemptKey(messageId);
+        Long attempts = redisTemplate.opsForValue().increment(attemptKey);
+        if (attempts != null && attempts == 1) {
+            redisTemplate.expire(attemptKey, messageExpiryTime, TimeUnit.DAYS);
+        }
         if (attempts != null && attempts > maxTries) {
-            // Delete message and AES key if max attempts exceeded
             deleteEncryptedMessage(messageId);
             return true;
         }
