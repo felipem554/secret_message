@@ -18,7 +18,7 @@ import java.util.concurrent.TimeoutException;
 @Configuration
 public class NatsConfig {
 
-    @Value("${NATS_URL}")
+    @Value("${nats.server.url}")
     private String natsUrl;
 
     @Value("${NATS_USER:#{null}}")
