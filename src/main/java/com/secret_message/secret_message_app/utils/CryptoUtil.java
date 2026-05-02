@@ -12,6 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
 
@@ -35,7 +36,7 @@ public class CryptoUtil {
         Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
         cipher.init(Cipher.ENCRYPT_MODE, aesKey, ivSpec);
 
-        byte[] encryptedData = cipher.doFinal(content.getBytes());
+        byte[] encryptedData = cipher.doFinal(content.getBytes(StandardCharsets.UTF_8));
 
         byte[] encryptedMessageWithIv = new byte[iv.length + encryptedData.length];
         System.arraycopy(iv, 0, encryptedMessageWithIv, 0, iv.length);
@@ -57,7 +58,7 @@ public class CryptoUtil {
         cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec);
 
         byte[] decryptedData = cipher.doFinal(encryptedData);
-        return new String(decryptedData);
+        return new String(decryptedData, StandardCharsets.UTF_8);
     }
 
     public String decryptMessage(String encryptedContent, String aesKey) throws InvalidAlgorithmParameterException,
