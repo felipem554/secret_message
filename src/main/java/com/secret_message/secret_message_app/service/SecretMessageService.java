@@ -3,10 +3,7 @@ package com.secret_message.secret_message_app.service;
 import com.secret_message.secret_message_app.cache.RedisCacheManager;
 import com.secret_message.secret_message_app.model.SecretMessageIdentifier;
 import com.secret_message.secret_message_app.utils.CryptoUtil;
-import com.secret_message.secret_message_app.utils.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.BadPaddingException;
@@ -22,38 +19,25 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SecretMessageService {
 
-    @Autowired
-    private RedisCacheManager redisCacheManager;
-
-    @Autowired
-    private CryptoUtil cryptoUtil;
-
-    @Autowired
-    private PasswordGenerator passwordGenerator;
-
-    @Value("${app.password-length}")
-    private int passwordLength;
-
+    private final RedisCacheManager redisCacheManager;
+    private final CryptoUtil cryptoUtil;
 
     public SecretMessageIdentifier createSecretMessage(String secretMessage) {
         String messageId = UUID.randomUUID().toString();
-
         try {
-            // Generate a random AES key instead of deriving from password
             SecretKey secretKey = cryptoUtil.generateRandomAESKey();
             String encryptedMessage = cryptoUtil.encryptMessage(secretMessage, secretKey);
-
             redisCacheManager.storeEncryptedMessage(messageId, encryptedMessage);
-
-            return new SecretMessageIdentifier(messageId, secretKey); // Return the message ID and AES key
-
+            return new SecretMessageIdentifier(messageId, secretKey);
         } catch (Exception e) {
-            // Handle encryption errors, possibly throw a custom exception or handle the error case appropriately
             throw new RuntimeException("Encryption failed", e);
         }
     }
 
-    public String getEncryptedMessageById(String messageId, String aesKey) throws InvalidAlgorithmParameterException, NoSuchPaddingException, IllegalBlockSizeException, NoSuchAlgorithmException, BadPaddingException, InvalidKeyException {
+    public String getEncryptedMessageById(String messageId, String aesKey)
+            throws InvalidAlgorithmParameterException, NoSuchPaddingException,
+                   IllegalBlockSizeException, NoSuchAlgorithmException,
+                   BadPaddingException, InvalidKeyException {
 
         if (redisCacheManager.incrementAndCheckAttempt(messageId)) {
             redisCacheManager.deleteEncryptedMessage(messageId);
@@ -62,8 +46,6 @@ public class SecretMessageService {
         try {
             String encryptedMessage = redisCacheManager.getEncryptedMessageById(messageId);
             String decryptedMessage = cryptoUtil.decryptMessage(encryptedMessage, aesKey);
-
-            // Message being deleted after successful decryption
             redisCacheManager.deleteEncryptedMessage(messageId);
             redisCacheManager.resetAttempt(messageId);
             return decryptedMessage;
