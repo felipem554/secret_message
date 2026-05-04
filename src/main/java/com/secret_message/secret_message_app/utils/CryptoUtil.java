@@ -2,17 +2,23 @@ package com.secret_message.secret_message_app.utils;
 
 import org.springframework.stereotype.Service;
 
-import javax.crypto.*;
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.KeyGenerator;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
 
@@ -27,83 +33,85 @@ public class CryptoUtil {
     private static final int IV_LENGTH = 16;
     private static final SecureRandom secureRandom = new SecureRandom();
 
-    public String encryptMessage(String content, SecretKey aesKey) throws Exception {
+    public byte[] encrypt(byte[] plaintext, byte[] keyBytes)
+            throws NoSuchPaddingException, NoSuchAlgorithmException,
+                   InvalidAlgorithmParameterException, InvalidKeyException,
+                   IllegalBlockSizeException, BadPaddingException {
 
         byte[] iv = new byte[IV_LENGTH];
         secureRandom.nextBytes(iv);
-        IvParameterSpec ivSpec = new IvParameterSpec(iv);
 
         Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
-        cipher.init(Cipher.ENCRYPT_MODE, aesKey, ivSpec);
+        cipher.init(Cipher.ENCRYPT_MODE,
+                new SecretKeySpec(keyBytes, ENCRYPTION_ALGORITHM),
+                new IvParameterSpec(iv));
+        byte[] ciphertext = cipher.doFinal(plaintext);
 
-        byte[] encryptedData = cipher.doFinal(content.getBytes(StandardCharsets.UTF_8));
-
-        byte[] encryptedMessageWithIv = new byte[iv.length + encryptedData.length];
-        System.arraycopy(iv, 0, encryptedMessageWithIv, 0, iv.length);
-        System.arraycopy(encryptedData, 0, encryptedMessageWithIv, iv.length, encryptedData.length);
-
-        return Base64.getEncoder().encodeToString(encryptedMessageWithIv);
+        byte[] out = new byte[iv.length + ciphertext.length];
+        System.arraycopy(iv, 0, out, 0, iv.length);
+        System.arraycopy(ciphertext, 0, out, iv.length, ciphertext.length);
+        return out;
     }
 
-    public String decryptMessage(String encryptedContent, SecretKey secretKey) throws NoSuchPaddingException,
-            NoSuchAlgorithmException, InvalidAlgorithmParameterException, InvalidKeyException, IllegalBlockSizeException, BadPaddingException {
+    public byte[] decrypt(byte[] ivAndCiphertext, byte[] keyBytes)
+            throws NoSuchPaddingException, NoSuchAlgorithmException,
+                   InvalidAlgorithmParameterException, InvalidKeyException,
+                   IllegalBlockSizeException, BadPaddingException {
 
-        byte[] decodedData = Base64.getDecoder().decode(encryptedContent);
-        byte[] iv = Arrays.copyOfRange(decodedData, 0, IV_LENGTH);
-        IvParameterSpec ivSpec = new IvParameterSpec(iv);
-
-        byte[] encryptedData = Arrays.copyOfRange(decodedData, IV_LENGTH, decodedData.length);
+        byte[] iv = Arrays.copyOfRange(ivAndCiphertext, 0, IV_LENGTH);
+        byte[] ciphertext = Arrays.copyOfRange(ivAndCiphertext, IV_LENGTH, ivAndCiphertext.length);
 
         Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec);
-
-        byte[] decryptedData = cipher.doFinal(encryptedData);
-        return new String(decryptedData, StandardCharsets.UTF_8);
+        cipher.init(Cipher.DECRYPT_MODE,
+                new SecretKeySpec(keyBytes, ENCRYPTION_ALGORITHM),
+                new IvParameterSpec(iv));
+        return cipher.doFinal(ciphertext);
     }
 
-    public String decryptMessage(String encryptedContent, String aesKey) throws InvalidAlgorithmParameterException,
-            NoSuchPaddingException, IllegalBlockSizeException, NoSuchAlgorithmException, BadPaddingException, InvalidKeyException {
+    public String encryptMessage(String content, SecretKey aesKey)
+            throws NoSuchPaddingException, NoSuchAlgorithmException,
+                   InvalidAlgorithmParameterException, InvalidKeyException,
+                   IllegalBlockSizeException, BadPaddingException {
+
+        byte[] result = encrypt(content.getBytes(StandardCharsets.UTF_8), aesKey.getEncoded());
+        return Base64.getEncoder().encodeToString(result);
+    }
+
+    public String decryptMessage(String encryptedContent, SecretKey secretKey)
+            throws NoSuchPaddingException, NoSuchAlgorithmException,
+                   InvalidAlgorithmParameterException, InvalidKeyException,
+                   IllegalBlockSizeException, BadPaddingException {
+
+        byte[] decoded = Base64.getDecoder().decode(encryptedContent);
+        byte[] decrypted = decrypt(decoded, secretKey.getEncoded());
+        return new String(decrypted, StandardCharsets.UTF_8);
+    }
+
+    public String decryptMessage(String encryptedContent, String aesKey)
+            throws InvalidAlgorithmParameterException, NoSuchPaddingException,
+                   IllegalBlockSizeException, NoSuchAlgorithmException,
+                   BadPaddingException, InvalidKeyException {
+
         byte[] decodedKey = Base64.getDecoder().decode(aesKey);
         SecretKey secretKey = new SecretKeySpec(decodedKey, ENCRYPTION_ALGORITHM);
         return decryptMessage(encryptedContent, secretKey);
     }
 
-    /**
-     * Generates a random AES-256 key for encryption.
-     * This is more secure than password-based key derivation for random keys.
-     * 
-     * @return A SecretKey for AES encryption
-     * @throws NoSuchAlgorithmException if AES algorithm is not available
-     */
     public SecretKey generateRandomAESKey() throws NoSuchAlgorithmException {
         KeyGenerator keyGenerator = KeyGenerator.getInstance(ENCRYPTION_ALGORITHM);
         keyGenerator.init(KEY_LENGTH, secureRandom);
         return keyGenerator.generateKey();
     }
 
-    /**
-     * Derives a key from a password using PBKDF2.
-     * Note: The salt is randomly generated each time, so the same password will produce different keys.
-     * For proper password-based encryption, the salt should be stored with the encrypted data.
-     * 
-     * @param password The password to derive the key from
-     * @param salt The salt to use for key derivation (must be stored with encrypted data)
-     * @return A SecretKey for AES encryption
-     * @throws NoSuchAlgorithmException if PBKDF2 algorithm is not available
-     * @throws InvalidKeySpecException if the key specification is invalid
-     */
-    public SecretKey deriveKeyFromPassword(String password, byte[] salt) throws NoSuchAlgorithmException, InvalidKeySpecException {
+    public SecretKey deriveKeyFromPassword(String password, byte[] salt)
+            throws NoSuchAlgorithmException, InvalidKeySpecException {
+
         SecretKeyFactory factory = SecretKeyFactory.getInstance(SECRET_KEY_FACTORY_ALGORITHM);
         KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
         SecretKey secretKey = factory.generateSecret(spec);
         return new SecretKeySpec(secretKey.getEncoded(), ENCRYPTION_ALGORITHM);
     }
-    
-    /**
-     * Generates a random salt for password-based key derivation.
-     * 
-     * @return A byte array containing the random salt
-     */
+
     public byte[] generateSalt() {
         byte[] salt = new byte[IV_LENGTH];
         secureRandom.nextBytes(salt);
