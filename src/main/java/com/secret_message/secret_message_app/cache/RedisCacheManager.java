@@ -1,7 +1,5 @@
 package com.secret_message.secret_message_app.cache;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -31,7 +29,6 @@ public class RedisCacheManager {
         return "attempts:" + messageId;
     }
 
-    // Store and Set to delete in days
     public void storeEncryptedMessage(String messageId, String encryptedMessage) {
         redisTemplate.opsForValue().set(buildMessageKey(messageId), encryptedMessage, messageExpiryTime, TimeUnit.DAYS);
     }
@@ -42,6 +39,15 @@ public class RedisCacheManager {
 
     public void deleteEncryptedMessage(String messageId) {
         redisTemplate.delete(buildMessageKey(messageId));
+    }
+
+    /**
+     * Race-closing primitive for the reveal success path.
+     * Returns true only for the caller that actually performed the delete.
+     */
+    public boolean deleteIfPresent(String messageId) {
+        Boolean deleted = redisTemplate.delete(buildMessageKey(messageId));
+        return Boolean.TRUE.equals(deleted);
     }
 
     public boolean incrementAndCheckAttempt(String messageId) {
@@ -59,5 +65,9 @@ public class RedisCacheManager {
 
     public void resetAttempt(String messageId) {
         redisTemplate.delete(buildAttemptKey(messageId));
+    }
+
+    public Long getAttemptKeyTtl(String messageId) {
+        return redisTemplate.getExpire(buildAttemptKey(messageId), java.util.concurrent.TimeUnit.SECONDS);
     }
 }

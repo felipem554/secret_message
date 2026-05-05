@@ -1,637 +1,290 @@
-# 🔐 Self-Destructing Secret Message Service
+# Self-Destructing Secret Message Service
 
-A secure, production-ready service for sharing encrypted messages that automatically self-destruct after being read. Built with Spring Boot, Redis, and NATS messaging.
+A secure service for sharing encrypted messages that self-destruct after being read. Built with Spring Boot, Redis, and NATS.
 
-## 📋 Table of Contents
+Messages are encrypted with AES-256 before storage. The server never persists the decryption key — only the client holds it. A message deletes itself on first successful read, or after three failed decryption attempts, or after a server-configured TTL (default 2 days).
 
-- [Overview](#overview)
-- [Features](#features)
+## Table of Contents
+
 - [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [HTTP API](#http-api)
+- [NATS Interface (internal)](#nats-interface-internal)
 - [Configuration](#configuration)
-- [Usage Examples](#usage-examples)
 - [Security](#security)
-- [API Reference](#api-reference)
 - [Development](#development)
 - [Testing](#testing)
-- [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
 
-## 🎯 Overview
-
-This service provides a secure way to share sensitive information that should only be read once. Messages are encrypted with AES-256 encryption and automatically deleted after:
-- Being successfully retrieved
-- Three failed decryption attempts
-- A configurable expiration time (default: 2 days)
-
-**Perfect for**: Sharing passwords, API keys, sensitive notes, or any confidential information that should not persist.
-
-## ✨ Features
-
-### Core Features
-- 🔒 **AES-256 Encryption**: Military-grade encryption for all messages
-- 🔑 **Unique Access Keys**: Each message gets a unique, randomly generated encryption key
-- 💣 **Self-Destruct**: Messages automatically delete after being read
-- 🛡️ **Attempt Limiting**: Maximum 3 failed decryption attempts before deletion
-- ⏰ **Auto-Expiration**: Configurable message lifetime (default: 2 days)
-- 📊 **Redis Caching**: Fast, reliable message storage with built-in expiration
-
-### Security Features
-- 🔐 **NATS Authentication**: Secure message broker communication
-- 🔑 **Redis Password Protection**: Protected data storage
-- ✅ **Input Validation**: Size limits and content validation
-- 📝 **Audit Logging**: Comprehensive logging for security monitoring
-- 🚫 **Rate Limiting Ready**: Documentation and architecture for rate limiting
-
-### Operational Features
-- 🐳 **Docker Ready**: Complete containerization with Docker Compose
-- 🔧 **Configurable**: Environment-based configuration
-- 📈 **Production Ready**: Security hardened and optimized
-- 🧪 **Well Tested**: Comprehensive integration tests
-- 📚 **Documented**: Extensive documentation and examples
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│   Client    │────────▶│  NATS Broker │────────▶│  App Server │
-│             │◀────────│              │◀────────│             │
-└─────────────┘         └──────────────┘         └──────┬──────┘
-                                                         │
-                                                         ▼
-                                                   ┌──────────┐
-                                                   │  Redis   │
-                                                   │  Cache   │
-                                                   └──────────┘
+Public clients
+     │
+     ▼ HTTPS (TLS at reverse proxy)
+┌────────────────────────────────┐
+│  ClientIpFilter (XFF trust)    │
+│  RateLimitFilter (100/day/IP)  │
+│  MessageController             │  POST /api/v1/messages
+│  MessageController             │  POST /api/v1/messages/reveal
+└──────────────┬─────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  SecretMessageService            │  encrypt / decrypt / attempt-count
+│  IdempotencyService              │  duplicate-create prevention
+└──────────┬───────────────────────┘
+           │
+     ┌─────┴──────┐
+     ▼            ▼
+  Redis        NATS (internal)
+messages:*     save.msg / receive.msg
+attempts:*
+idempotency:*
 ```
 
-### Components
+**NATS is now an internal transport only.** Backend services and scripts can still publish to `save.msg` / `receive.msg` directly. Public clients use the HTTP API.
 
-1. **Spring Boot Application**: Main application server handling encryption/decryption
-2. **NATS**: Message broker for asynchronous communication
-3. **Redis**: In-memory data store for encrypted messages with expiration
-4. **Docker**: Containerization for all services
+### Request flow — HTTP
 
-### Data Flow
+```
+POST /api/v1/messages  {"message": "..."}
+  → IdempotencyService (duplicate check)
+  → SecretMessageService.createSecretMessage
+  → AES-256 encrypt (random key + IV)
+  → Redis  messages:<id>  (TTL: auto-delete-days)
+  ← 201  {"messageId": "...", "aesKey": "..."}
 
-**Creating a Message:**
-1. Client publishes message to `save.msg` subject via NATS
-2. Application generates random AES-256 key
-3. Message is encrypted with the key
-4. Encrypted message stored in Redis with expiration
-5. Message ID and encryption key returned to client
+POST /api/v1/messages/reveal  {"messageId": "...", "aesKey": "..."}
+  → SecretMessageService.getEncryptedMessageById
+  → Redis fetch → AES-256 decrypt → Redis atomic delete
+  ← 200  {"message": "..."}
+```
 
-**Retrieving a Message:**
-1. Client publishes message ID + key to `receive.msg` subject
-2. Application retrieves encrypted message from Redis
-3. Message is decrypted using provided key
-4. Original message returned to client
-5. Message deleted from Redis (self-destruct)
+## Quick Start
 
-## 📦 Prerequisites
+### Prerequisites
 
-- **Docker** (version 20.10+)
-- **Docker Compose** (version 2.0+)
-- **Java 21** (for local development)
-- **Gradle** (wrapper included)
+- Docker 20.10+ and Docker Compose 2.0+
+- Java 21 (local development only)
 
-## 🚀 Quick Start
-
-### 1. Clone the Repository
+### 1. Configure environment
 
 ```bash
-git clone <repository-url>
-cd secret_message
+cp .env.example .env
+# Edit .env and set all passwords, and generate a master idempotency key:
+openssl rand -base64 32    # → paste as IDEMPOTENCY_MASTER_KEY
 ```
 
-### 2. Configure Environment Variables
-
-Create a `.env` file in the project root:
+### 2. Start the stack
 
 ```bash
-# Redis Configuration
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your-secure-redis-password
-
-# NATS Configuration
-NATS_URL=nats://nats:4222
-NATS_USER=your-nats-username
-NATS_PASS=your-secure-nats-password
-
-# Application Configuration
-DEBUG=false
-```
-
-### 3. Build and Start Services
-
-```bash
-# Build Docker images
-docker compose build
-
-# Start all services
 docker compose up -d
-
-# View logs
 docker compose logs -f app
 ```
 
-### 4. Verify Services
+### 3. Smoke test
 
 ```bash
-# Check service status
-docker compose ps
+# Health check
+curl http://localhost:8080/status
 
-# Test NATS connection
-docker compose exec nats-box nats server check --server nats:4222 --user your-nats-username --password your-secure-nats-password
+# Create a secret
+curl -s -X POST http://localhost:8080/api/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"my secret"}' | tee /tmp/secret.json
+
+# Reveal it (copy messageId and aesKey from above)
+curl -s -X POST http://localhost:8080/api/v1/messages/reveal \
+  -H 'Content-Type: application/json' \
+  -d "{\"messageId\":\"$(jq -r .messageId /tmp/secret.json)\",\"aesKey\":\"$(jq -r .aesKey /tmp/secret.json)\"}"
 ```
 
-## ⚙️ Configuration
+## HTTP API
 
-### Application Properties
+Base path: `/api/v1`
 
-Configure via environment variables or `application.properties`:
+All requests and responses use `Content-Type: application/json`. All responses include `Cache-Control: no-store`.
 
-| Variable | Default                 | Description |
-|----------|-------------------------|-------------|
-| `SPRING_REDIS_HOST` | `localhost`             | Redis server hostname |
-| `SPRING_REDIS_PORT` | `6379`                  | Redis server port |
-| `SPRING_REDIS_PASSWORD` | -                       | Redis authentication password |
-| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
-| `NATS_USER` | -                       | NATS authentication username |
-| `NATS_PASS` | -                       | NATS authentication password |
-| `app.auto-delete-days` | `2`                     | Message expiration in days |
-| `app.max-tries` | `3`                     | Maximum decryption attempts |
-| `app.max-message-size` | `1048576`               | Max message size (1MB) |
-
-### Security Configuration
-
-**Production Checklist:**
-- ✅ Set strong passwords for Redis and NATS
-- ✅ Disable debug port (remove `- "5005:5005"` from compose.yaml)
-- ✅ Use TLS/SSL for external connections
-- ✅ Implement rate limiting (see [docs/RATE_LIMITING.md](docs/RATE_LIMITING.md))
-- ✅ Set up monitoring and alerts
-- ✅ Regular security updates
-
-## 💡 Usage Examples
-
-### Using NATS Box (Recommended for Testing)
-
-#### Save a Secret Message
-
-```bash
-# Access NATS Box container
-docker compose exec nats-box /bin/sh
-
-# Save a message
-nats request save.msg "This is my secret message" --server nats:4222 --user your-nats-username --password your-secure-nats-password
-```
-
-**Response:**
-```json
-{
-  "messageId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "aeskey": "dGhpc2lzYXNlY3VyZWtleWVuY29kZWRpbmJhc2U2NA=="
-}
-```
-
-#### Retrieve a Secret Message
-
-```bash
-# Retrieve the message using the ID and key
-nats request receive.msg '{"messageId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","aeskey":"dGhpc2lzYXNlY3VyZWtleWVuY29kZWRpbmJhc2U2NA=="}' --server nats:4222 --user your-nats-username --password your-secure-nats-password
-```
-
-**Response:**
-```
-"This is my secret message"
-```
-
-### Using NATS CLI
-
-#### Install NATS CLI
-
-```bash
-# macOS
-brew install nats-io/nats-tools/nats
-
-# Linux
-curl -sf https://binaries.nats.dev/nats-io/natscli/nats@latest | sh
-
-# Windows
-scoop install nats
-```
-
-#### Connect and Send Messages
-
-```bash
-# Set credentials
-export NATS_URL=nats://localhost:4222
-export NATS_USER=natsuser
-export NATS_PASS=natspassword
-
-# Save a message
-nats req save.msg "My confidential data" --user $NATS_USER --password $NATS_PASS
-
-# Retrieve a message
-nats req receive.msg '{"messageId":"YOUR_MESSAGE_ID","aeskey":"YOUR_AES_KEY"}' --user $NATS_USER --password $NATS_PASS
-```
-
-### Using Programming Languages
-
-#### Python Example
-
-```python
-import asyncio
-import json
-from nats.aio.client import Client as NATS
-
-async def save_secret_message(message: str):
-    nc = NATS()
-    await nc.connect("nats://localhost:4222", user="natsuser", password="natspassword")
-    
-    response = await nc.request("save.msg", message.encode(), timeout=5)
-    result = json.loads(response.data.decode())
-    
-    await nc.close()
-    return result
-
-async def retrieve_secret_message(message_id: str, aes_key: str):
-    nc = NATS()
-    await nc.connect("nats://localhost:4222", user="natsuser", password="natspassword")
-    
-    payload = json.dumps({"messageId": message_id, "aeskey": aes_key})
-    response = await nc.request("receive.msg", payload.encode(), timeout=5)
-    message = json.loads(response.data.decode())
-    
-    await nc.close()
-    return message
-
-# Usage
-async def main():
-    # Save message
-    result = await save_secret_message("My secret password: P@ssw0rd123")
-    print(f"Message ID: {result['messageId']}")
-    print(f"AES Key: {result['aeskey']}")
-    
-    # Retrieve message
-    message = await retrieve_secret_message(result['messageId'], result['aeskey'])
-    print(f"Retrieved: {message}")
-
-asyncio.run(main())
-```
-
-#### JavaScript/Node.js Example
-
-```javascript
-const { connect, StringCodec } = require('nats');
-
-async function saveSecretMessage(message) {
-    const nc = await connect({ 
-        servers: 'nats://localhost:4222',
-        user: 'natsuser',
-        pass: 'natspassword'
-    });
-    
-    const sc = StringCodec();
-    const response = await nc.request('save.msg', sc.encode(message), { timeout: 5000 });
-    const result = JSON.parse(sc.decode(response.data));
-    
-    await nc.close();
-    return result;
-}
-
-async function retrieveSecretMessage(messageId, aesKey) {
-    const nc = await connect({ 
-        servers: 'nats://localhost:4222',
-        user: 'natsuser',
-        pass: 'natspassword'
-    });
-    
-    const sc = StringCodec();
-    const payload = JSON.stringify({ messageId, aeskey: aesKey });
-    const response = await nc.request('receive.msg', sc.encode(payload), { timeout: 5000 });
-    const message = JSON.parse(sc.decode(response.data));
-    
-    await nc.close();
-    return message;
-}
-
-// Usage
-(async () => {
-    // Save message
-    const result = await saveSecretMessage('My secret API key: sk-1234567890');
-    console.log(`Message ID: ${result.messageId}`);
-    console.log(`AES Key: ${result.aeskey}`);
-    
-    // Retrieve message
-    const message = await retrieveSecretMessage(result.messageId, result.aeskey);
-    console.log(`Retrieved: ${message}`);
-})();
-```
-
-## 🔒 Security
-
-### Encryption
-
-- **Algorithm**: AES-256 in CBC mode with PKCS5 padding
-- **Key Generation**: Cryptographically secure random key generation
-- **IV**: Unique random initialization vector for each message
-- **Key Storage**: Keys are never stored, only provided to the client
-
-### Authentication
-
-- **NATS**: Username/password authentication (configurable)
-- **Redis**: Password protection (configurable)
-- **Future**: OAuth2/JWT support planned
-
-### Best Practices
-
-1. **Use Strong Passwords**: Set strong, unique passwords for Redis and NATS
-2. **Enable TLS**: Use TLS for all network communications in production
-3. **Implement Rate Limiting**: See [docs/RATE_LIMITING.md](docs/RATE_LIMITING.md)
-4. **Monitor Logs**: Set up centralized logging and monitoring
-5. **Regular Updates**: Keep dependencies and base images updated
-6. **Network Isolation**: Use Docker networks to isolate services
-7. **Principle of Least Privilege**: Run containers with minimal permissions
-
-### Known Limitations
-
-- No built-in rate limiting (documentation provided for implementation)
-- No TLS/SSL by default (must be configured externally)
-- No user authentication (NATS-level auth only)
-
-## 📚 API Reference
-
-### NATS Subjects
-
-#### `save.msg`
-Save a new secret message.
+### `POST /messages` — Create a secret
 
 **Request:**
-- Type: String
-- Content: The secret message to encrypt and store
-- Max Size: 1 MB (configurable)
 
-**Response:**
+```http
+POST /api/v1/messages
+Content-Type: application/json
+Idempotency-Key: <uuid>   (optional)
+
+{"message": "the secret payload"}
+```
+
+The optional `Idempotency-Key` header prevents duplicate messages on client retries. If the same key is submitted with the same body a second time, the original `messageId` and `aesKey` are returned (`duplicate: true`) without creating a new message. Reusing the key with a different body returns `409 Conflict`.
+
+**Success responses:**
+
+| Status | When |
+|--------|------|
+| `201 Created` | New message created |
+| `200 OK` + `duplicate: true` | Idempotent retry — original response recovered |
+
 ```json
 {
-  "messageId": "uuid-v4",
-  "aeskey": "base64-encoded-key"
+  "messageId": "550e8400-e29b-41d4-a716-446655440000",
+  "aesKey": "base64-encoded-32-byte-key"
 }
 ```
 
-**Errors:**
-```json
-{
-  "error": "Message size exceeds maximum allowed: 1048576 bytes"
-}
-```
+**Store the `aesKey` immediately.** The server does not persist it in plaintext — it cannot be recovered if lost (except via the idempotency window).
 
-#### `receive.msg`
-Retrieve and decrypt a secret message.
+**Error responses:**
+
+| Status | Cause |
+|--------|-------|
+| `400` | Missing / blank `message` field, malformed JSON |
+| `409` | Idempotency key reused with different body |
+| `413` | Body exceeds 1 MB (`app.max-message-size`) |
+| `429` | Rate limit exceeded (100 requests/day/IP) |
+
+### `POST /messages/reveal` — Reveal a secret
 
 **Request:**
-```json
+
+```http
+POST /api/v1/messages/reveal
+Content-Type: application/json
+
 {
-  "messageId": "uuid-v4",
-  "aeskey": "base64-encoded-key"
+  "messageId": "550e8400-e29b-41d4-a716-446655440000",
+  "aesKey": "base64-encoded-32-byte-key"
 }
 ```
 
-**Response:**
-- Type: String
-- Content: The decrypted secret message
+**Success response:**
 
-**Errors:**
-- `"Maximum attempts reached, the message has been deleted."`
-- `{"error": "Failed to retrieve secret message: <reason>"}`
+```http
+HTTP/1.1 200 OK
+Cache-Control: no-store
 
-## 🛠️ Development
+{"message": "the secret payload"}
+```
 
-### Local Development Setup
+The message is deleted atomically on success. Any subsequent call with the same `messageId` returns `404`.
+
+**Error responses:**
+
+All reveal failures return the same `404` regardless of cause (message not found, wrong key, attempts exhausted). This is intentional — distinguishing them would let attackers determine whether a message ID exists.
+
+```json
+{"error": "message not available"}
+```
+
+| Status | Cause |
+|--------|-------|
+| `400` | Missing / blank fields |
+| `404` | Message not found, wrong key, or attempts exhausted |
+| `429` | Rate limit exceeded |
+
+**Attempt limit:** three wrong-key attempts against the same message ID delete the message permanently, regardless of which IP the attempts come from.
+
+## NATS Interface (internal)
+
+These subjects remain available for backend / scripted access. They are not rate-limited or exposed to the public network.
+
+| Subject | Input | Output |
+|---------|-------|--------|
+| `save.msg` | plaintext string (≤ 1 MB) | `{"messageId":"...", "aeskey":"..."}` |
+| `receive.msg` | `{"messageId":"...", "aeskey":"..."}` | plaintext string |
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd secret_message
+nats request save.msg "my internal secret" --server nats://localhost:4222
+nats request receive.msg '{"messageId":"...","aeskey":"..."}' --server nats://localhost:4222
+```
 
-# Start dependencies (Redis & NATS)
+## Configuration
+
+| Property / Env var | Default | Purpose |
+|--------------------|---------|---------|
+| `IDEMPOTENCY_MASTER_KEY` | dev fallback (change in prod) | Base64-encoded 32-byte AES key for encrypting AES keys in idempotency records. Generate: `openssl rand -base64 32` |
+| `SPRING_REDIS_HOST` | `localhost` | Redis host |
+| `SPRING_REDIS_PORT` | `6379` | Redis port |
+| `SPRING_REDIS_PASSWORD` | — | Redis password |
+| `NATS_URL` | `nats://localhost:4222` | NATS broker |
+| `NATS_USER` / `NATS_PASS` | — | NATS credentials |
+| `app.auto-delete-days` | `2` | Message TTL in days |
+| `app.max-tries` | `3` | Max failed decryption attempts before deletion |
+| `app.max-message-size` | `1048576` | Max message size in bytes (1 MB) |
+| `app.rate-limit.requests-per-day` | `100` | HTTP API rate limit per client IP |
+| `server.forward-headers-strategy` | `NATIVE` | Trust `X-Forwarded-For` from private-range proxies |
+
+## Security
+
+- **AES-256-CBC** with a unique random IV per message. The server never stores the per-message key.
+- **One-shot**: first successful reveal deletes the message atomically (race-safe).
+- **3-strike**: three wrong-key attempts — from any IP — delete the message.
+- **Rate limiting**: 100 requests/day per client IP, Redis-backed (shared across replicas).
+- **Idempotency keys**: per-message AES keys stored encrypted under a server-held master key (`IDEMPOTENCY_MASTER_KEY`) inside idempotency records. Never stored in plaintext.
+- **Uniform 404**: wrong key, not found, and exhausted-attempts are indistinguishable externally.
+- **No caching**: all API responses carry `Cache-Control: no-store`.
+- **TLS**: must be terminated at the reverse proxy (nginx, Caddy, cloud LB). The app does not serve TLS directly.
+
+See `docs/MEMORY_HARDENING.md` for JVM/OS-level key-material protections.
+See `docs/HTTP_API_DESIGN.md` for the full design rationale.
+See `docs/STORAGE_NATS_VS_REDIS.md` (ADR-0001) for the Redis vs NATS JetStream architecture decision.
+
+## Development
+
+```bash
+# Start dependencies only
 docker compose up redis nats -d
 
-# Run application locally
+# Run app locally
 ./gradlew bootRun
 
-# Or with specific profile
-./gradlew bootRun --args='--spring.profiles.active=dev'
+# Run with debug port
+DEBUG=true docker compose up -d
 ```
 
-### Running Tests
+## Testing
 
 ```bash
-# Run all tests
-./gradlew test
+# All tests (requires Docker socket at /var/run/docker.sock)
+./gradlew clean test
 
-# Run specific test class
-./gradlew test --tests SecretMessageServiceTest
+# Specific class
+./gradlew test --tests MessageApiIntegrationTest
 
-# Run with coverage
-./gradlew test jacocoTestReport
+# Specific method
+./gradlew test --tests "SecretMessageServiceTest.utf8RoundTripTest"
 ```
 
-### Build Docker Image
+Tests use Testcontainers to spin up real Redis and NATS instances. The Gradle test task sets `api.version=1.44` as a JVM property to satisfy Docker Engine 25+ compatibility.
+
+## Troubleshooting
+
+**`IDEMPOTENCY_MASTER_KEY` missing at startup**
+
+The application will refuse to start if the key is absent or not a valid 32-byte Base64 string. Generate one and set it in your `.env`:
 
 ```bash
-# Build production image
-docker build -t secret-message-app:latest .
-
-# Build with specific target
-docker build --target test -t secret-message-app:test .
+openssl rand -base64 32
 ```
 
-### Code Style
+**Rate limit exceeded in dev**
 
-This project follows standard Java/Spring Boot conventions:
-- Use SLF4J for logging
-- Follow JavaDoc conventions
-- Use Lombok for boilerplate reduction
-- Implement proper exception handling
-
-## 🐳 Deployment
-
-### Docker Compose Deployment
+The rate limit key is `ratelimit:<ip>`. Flush it in Redis:
 
 ```bash
-# Production deployment
-docker compose -f compose.yaml up -d
-
-# View logs
-docker compose logs -f
-
-# Stop services
-docker compose down
+docker compose exec redis redis-cli DEL "ratelimit:127.0.0.1"
 ```
 
-### Kubernetes Deployment
+**Message already retrieved / not found**
 
-See [README.Docker.md](README.Docker.md) for Kubernetes deployment instructions.
+A 404 on reveal means the message is gone — either retrieved, expired, or deleted by the 3-strike counter. There is no recovery path by design.
 
-### Health Checks
+**Connection refused to Redis or NATS**
 
 ```bash
-# Application health
-curl http://localhost:8080/actuator/health
-
-# NATS monitoring
-curl http://localhost:8222/varz
-
-# Redis
-docker compose exec redis redis-cli ping
-```
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-#### 1. Connection Refused to Redis
-
-**Problem**: `Connection refused` error when connecting to Redis.
-
-**Solution:**
-```bash
-# Check Redis is running
-docker compose ps redis
-
-# Check Redis logs
+docker compose ps        # check container status
 docker compose logs redis
-
-# Verify Redis password
-docker compose exec redis redis-cli -a yourpassword ping
+docker compose logs nats
 ```
-
-#### 2. NATS Authentication Failed
-
-**Problem**: `Authorization violation` when publishing to NATS.
-
-**Solution:**
-- Verify NATS_USER and NATS_PASS are set correctly
-- Check NATS server logs: `docker compose logs nats`
-- Ensure credentials match in both client and server
-
-#### 3. Message Not Found
-
-**Problem**: Message returns null or "not found" error.
-
-**Possible Causes:**
-- Message already retrieved (self-destructed)
-- Message expired (>2 days old)
-- Wrong message ID
-- Maximum attempts exceeded
-
-**Solution:**
-```bash
-# Check if message exists in Redis
-docker compose exec redis redis-cli -a yourpassword KEYS "messages:*"
-
-# Check message TTL
-docker compose exec redis redis-cli -a yourpassword TTL "messages:your-message-id"
-```
-
-#### 4. Message Size Too Large
-
-**Problem**: `Message size exceeds maximum allowed` error.
-
-**Solution:**
-- Current limit: 1 MB (configurable)
-- Increase limit: Set `app.max-message-size` environment variable
-- Consider splitting large messages
-
-#### 5. Docker Container Exits Immediately
-
-**Problem**: App container exits right after starting.
-
-**Solution:**
-```bash
-# Check logs for errors
-docker compose logs app
-
-# Common issues:
-# - Redis/NATS not available
-# - Configuration errors
-# - Port conflicts
-```
-
-### Debug Mode
-
-To enable debug logging:
-
-```bash
-# Set in .env file
-DEBUG=true
-
-# Uncomment debug port in compose.yaml
-# - "5005:5005"
-
-# Restart services
-docker compose restart app
-```
-
-### Getting Help
-
-1. Check logs: `docker compose logs -f`
-2. Review configuration: `docker compose config`
-3. Check service status: `docker compose ps`
-4. Review documentation: See [docs/](docs/) directory
-5. Open an issue on GitHub
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes
-4. Run tests: `./gradlew test`
-5. Commit your changes: `git commit -m 'Add amazing feature'`
-6. Push to the branch: `git push origin feature/amazing-feature`
-7. Open a Pull Request
-
-### Areas for Contribution
-
-- [ ] Implement rate limiting
-- [ ] Add TLS/SSL support
-- [ ] Web UI for message creation/retrieval
-- [ ] REST API endpoints
-- [ ] User authentication system
-- [ ] Message categories/tags
-- [ ] Notification system
-- [ ] Multi-language support
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📞 Contact
-
-**Felipe M.**
-- Email: felipemarcelo554@gmail.com
-
-## 🙏 Acknowledgments
-
-- Spring Boot Team
-- NATS.io Community
-- Redis Team
-- Docker Community
-
----
-
-**⚠️ Security Notice**: This service is designed for secure message sharing but should not be used as the sole security mechanism for highly sensitive data. Always follow security best practices and conduct proper security audits before production use.
-
-**🔧 Production Ready**: With proper configuration and security hardening, this service is production-ready. See [docs/RATE_LIMITING.md](docs/RATE_LIMITING.md) for additional security recommendations.
