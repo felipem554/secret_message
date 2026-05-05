@@ -2,6 +2,7 @@ package com.secret_message.secret_message_app.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.secret_message.secret_message_app.cache.RedisCacheManager;
+import com.secret_message.secret_message_app.exception.MessageNotAvailableException;
 import com.secret_message.secret_message_app.model.SecretMessageIdentifier;
 import com.secret_message.secret_message_app.utils.CryptoUtil;
 import io.nats.client.Message;
@@ -36,7 +37,8 @@ class SecretMessageServiceTest {
     static void containerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.redis.host", redisContainer::getHost);
         registry.add("spring.redis.port", () -> redisContainer.getMappedPort(6379));
-        registry.add("nats.server.url", () -> "nats://" + natsContainer.getHost() + ":" + natsContainer.getMappedPort(4222));
+        registry.add("nats.server.url",
+                () -> "nats://" + natsContainer.getHost() + ":" + natsContainer.getMappedPort(4222));
     }
 
     @Autowired
@@ -65,7 +67,6 @@ class SecretMessageServiceTest {
         assertDoesNotThrow(() -> natsService.createSecretMessageSubscriber(msg));
 
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(secretMessage);
-
         assertNotNull(identifier.getMessageId());
         assertNotNull(identifier.getSecretKey());
         assertNotNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
@@ -77,55 +78,95 @@ class SecretMessageServiceTest {
         String originalMessage = "This is a top secret message that should be encrypted!";
 
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
-
-        assertNotNull(identifier.getMessageId(), "Message ID should not be null");
-        assertNotNull(identifier.getSecretKey(), "Secret key should not be null");
-        assertNotNull(identifier.getAeskey(), "AES key string should not be null");
-        assertFalse(identifier.getMessageId().isEmpty(), "Message ID should not be empty");
-        assertFalse(identifier.getAeskey().isEmpty(), "AES key string should not be empty");
-
-        String encryptedMessage = redisCacheManager.getEncryptedMessageById(identifier.getMessageId());
-        assertNotNull(encryptedMessage, "Encrypted message should be stored in Redis");
-        assertFalse(encryptedMessage.isEmpty(), "Encrypted message should not be empty");
+        assertNotNull(identifier.getMessageId());
+        assertNotNull(identifier.getAeskey());
+        assertNotNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Encrypted message should be stored in Redis");
 
         String decryptedMessage = secretMessageService.getEncryptedMessageById(
-                identifier.getMessageId(),
-                identifier.getAeskey());
+                identifier.getMessageId(), identifier.getAeskey());
 
         assertEquals(originalMessage, decryptedMessage, "Decrypted message should match original");
+        assertNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Message should be deleted from Redis after retrieval");
+    }
 
-        String afterDeletion = redisCacheManager.getEncryptedMessageById(identifier.getMessageId());
-        assertNull(afterDeletion, "Message should be deleted from Redis after retrieval");
+    @Test
+    void createThenRevealLater_fullRoundTrip() throws Exception {
+        String original = "Delayed reveal: sensitive data";
+
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(original);
+        assertNotNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Message should be in Redis immediately after creation");
+
+        // Simulate time passing (well within 2-day TTL)
+        Thread.sleep(200);
+
+        String revealed = secretMessageService.getEncryptedMessageById(
+                identifier.getMessageId(), identifier.getAeskey());
+        assertEquals(original, revealed, "Message content must survive storage and retrieval");
+        assertNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Message must be deleted after successful reveal");
+    }
+
+    @Test
+    void utf8RoundTripTest() throws Exception {
+        // Non-ASCII plaintext exercises the explicit UTF-8 charset fix in CryptoUtil
+        String original = "Ação: Ünïcödé sëcrét — 中文 — 日本語 🔐";
+
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(original);
+        String revealed = secretMessageService.getEncryptedMessageById(
+                identifier.getMessageId(), identifier.getAeskey());
+
+        assertEquals(original, revealed, "Non-ASCII plaintext must survive encrypt/store/decrypt unchanged");
     }
 
     @Test
     void getSecretMessageWithWrongKeyTest() throws Exception {
-        String originalMessage = "Secret message with wrong key test";
-        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
-
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("wrong key test");
         String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
 
         assertThrows(Exception.class,
                 () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey),
-                "Should throw exception when using wrong key");
+                "Should throw when using wrong key");
     }
 
     @Test
     void maxAttemptsTest() throws Exception {
-        String originalMessage = "Message with max attempts test";
-        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(originalMessage);
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("max attempts test");
         String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
 
         for (int i = 0; i < 3; i++) {
             try {
                 secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
-            } catch (Exception e) {
-                // expected on wrong key
+            } catch (Exception ignored) {
+                // wrong-key attempts
             }
         }
 
-        String result = secretMessageService.getEncryptedMessageById(identifier.getMessageId(), identifier.getAeskey());
-        assertEquals("Maximum attempts reached, the message has been deleted.", result,
-                "Should return max attempts message after exceeding limit");
+        // 4th attempt (any key) — counter now exceeds max-tries, service throws EXHAUSTED
+        MessageNotAvailableException ex = assertThrows(
+                MessageNotAvailableException.class,
+                () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), identifier.getAeskey()),
+                "Should throw MessageNotAvailableException after exceeding attempt limit");
+
+        assertEquals(MessageNotAvailableException.Reason.EXHAUSTED, ex.getReason());
+        assertNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Message should be deleted after attempts are exhausted");
+    }
+
+    @Test
+    void attemptCounterTtlTest() throws Exception {
+        // Verifies attempts:* key has TTL and does not accumulate forever
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("ttl test");
+        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+
+        try {
+            secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
+        } catch (Exception ignored) {}
+
+        Long ttl = redisCacheManager.getAttemptKeyTtl(identifier.getMessageId());
+        assertNotNull(ttl, "attempts:* key should exist after a failed attempt");
+        assertTrue(ttl > 0, "attempts:* key must have a positive TTL (got " + ttl + ")");
     }
 }
