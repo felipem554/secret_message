@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -83,6 +84,7 @@ public class MessageController {
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header("Cache-Control", "no-store")
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new CreateMessageResponse(identifier.getMessageId(), identifier.getAeskey()));
     }
 
@@ -101,6 +103,7 @@ public class MessageController {
                     body.messageId(), body.aesKey());
             return ResponseEntity.ok()
                     .header("Cache-Control", "no-store")
+                    .contentType(MediaType.APPLICATION_JSON)
                     .body(new RevealResponse(plaintext));
         } catch (MessageNotAvailableException e) {
             throw e;

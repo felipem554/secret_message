@@ -52,11 +52,6 @@ public class SecretMessageService {
                    IllegalBlockSizeException, NoSuchAlgorithmException,
                    BadPaddingException, InvalidKeyException {
 
-        if (redisCacheManager.incrementAndCheckAttempt(messageId)) {
-            redisCacheManager.deleteEncryptedMessage(messageId);
-            throw new MessageNotAvailableException(MessageNotAvailableException.Reason.EXHAUSTED);
-        }
-
         try {
             String encryptedMessage = redisCacheManager.getEncryptedMessageById(messageId);
             if (encryptedMessage == null) {
@@ -70,6 +65,9 @@ public class SecretMessageService {
             return decryptedMessage;
         } catch (InvalidKeyException | NoSuchAlgorithmException | NoSuchPaddingException |
                  InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
+            if (redisCacheManager.incrementAndCheckAttempt(messageId)) {
+                throw new MessageNotAvailableException(MessageNotAvailableException.Reason.EXHAUSTED);
+            }
             throw e;
         } catch (MessageNotAvailableException e) {
             throw e;

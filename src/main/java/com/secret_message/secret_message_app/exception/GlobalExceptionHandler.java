@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -32,6 +33,7 @@ public class GlobalExceptionHandler {
                 "reason", ex.getReason().name().toLowerCase()).increment();
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse("message not available"));
     }
 
@@ -39,6 +41,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIdempotencyConflict() {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse("idempotency key conflict"));
     }
 
@@ -46,6 +49,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handlePayloadTooLarge() {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse("payload too large"));
     }
 
@@ -57,6 +61,7 @@ public class GlobalExceptionHandler {
                 .orElse("invalid request");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse(detail));
     }
 
@@ -64,6 +69,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnreadable() {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse("invalid request body"));
     }
 
@@ -72,6 +78,7 @@ public class GlobalExceptionHandler {
         log.error("Unhandled exception", ex);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Cache-Control", CACHE_NO_STORE)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse("service unavailable"));
     }
 }
