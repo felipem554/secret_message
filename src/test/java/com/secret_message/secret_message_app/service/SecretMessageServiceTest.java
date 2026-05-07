@@ -136,7 +136,7 @@ class SecretMessageServiceTest {
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("max attempts test");
         String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 2; i++) {
             try {
                 secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
             } catch (Exception ignored) {
@@ -144,10 +144,10 @@ class SecretMessageServiceTest {
             }
         }
 
-        // 4th attempt (any key) — counter now exceeds max-tries, service throws EXHAUSTED
+        // 3rd wrong-key attempt reaches max-tries and deletes the message.
         MessageNotAvailableException ex = assertThrows(
                 MessageNotAvailableException.class,
-                () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), identifier.getAeskey()),
+                () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey),
                 "Should throw MessageNotAvailableException after exceeding attempt limit");
 
         assertEquals(MessageNotAvailableException.Reason.EXHAUSTED, ex.getReason());

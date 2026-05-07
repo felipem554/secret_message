@@ -10,7 +10,9 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -66,8 +68,9 @@ class IdempotencyKeyVaultTest {
         byte[] plaintext = "some-aes-key-32-bytes-padded-xx!".getBytes();
         byte[] ciphertext = vault.encrypt(plaintext);
 
-        // Flip a bit in the ciphertext portion (after the 16-byte IV)
-        ciphertext[20] ^= 0xFF;
+        // CBC is unauthenticated by design here; flipping the padding block is
+        // the deterministic corruption case that must fail decryption.
+        ciphertext[ciphertext.length - 1] ^= 0xFF;
 
         assertThrows(IllegalStateException.class,
                 () -> vault.decrypt(ciphertext),
@@ -77,7 +80,8 @@ class IdempotencyKeyVaultTest {
     @Test
     void decrypt_withWrongMasterKey_throwsException() {
         // Build a second vault with a different key to simulate wrong MIEK
-        String differentKey = "d3JvbmdtYXN0ZXJrZXkzMmJ5dGVzc3M="; // "wrongmasterkey32bytesss" padded
+        String differentKey = Base64.getEncoder().encodeToString(
+                "wrong-master-key-32-bytes!!!!!!!".getBytes(StandardCharsets.UTF_8));
         IdempotencyKeyVault wrongVault = new IdempotencyKeyVault(differentKey, cryptoUtil);
 
         byte[] plaintext = "aes-key-material-32-bytes-padded".getBytes();

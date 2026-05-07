@@ -113,7 +113,7 @@ class MessageApiIntegrationTest {
                 .andReturn();
 
         RevealResponse revealed = objectMapper.readValue(
-                revealResult.getResponse().getContentAsString(), RevealResponse.class);
+                revealResult.getResponse().getContentAsByteArray(), RevealResponse.class);
         assertEquals(secret, revealed.message());
     }
 
