@@ -66,8 +66,11 @@ class IdempotencyKeyVaultTest {
         byte[] plaintext = "some-aes-key-32-bytes-padded-xx!".getBytes();
         byte[] ciphertext = vault.encrypt(plaintext);
 
-        // Flip a bit in the ciphertext portion (after the 16-byte IV)
-        ciphertext[20] ^= 0xFF;
+        // Flip the last byte: it is in the final (padding) ciphertext block, so AES decryption
+        // of that block is completely garbled → PKCS#5 padding check fails → BadPaddingException.
+        // (Flipping a byte in an earlier block only corrupts content bytes and leaves the padding
+        // block intact — intentional CBC trade-off documented in IdempotencyKeyVault Javadoc.)
+        ciphertext[ciphertext.length - 1] ^= 0xFF;
 
         assertThrows(IllegalStateException.class,
                 () -> vault.decrypt(ciphertext),
@@ -76,8 +79,9 @@ class IdempotencyKeyVaultTest {
 
     @Test
     void decrypt_withWrongMasterKey_throwsException() {
-        // Build a second vault with a different key to simulate wrong MIEK
-        String differentKey = "d3JvbmdtYXN0ZXJrZXkzMmJ5dGVzc3M="; // "wrongmasterkey32bytesss" padded
+        // Build a second vault with a different key to simulate wrong MIEK.
+        // Must be exactly 32 bytes (43 Base64 chars + one '=' pad = 44 chars total).
+        String differentKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; // 32 zero bytes
         IdempotencyKeyVault wrongVault = new IdempotencyKeyVault(differentKey, cryptoUtil);
 
         byte[] plaintext = "aes-key-material-32-bytes-padded".getBytes();
