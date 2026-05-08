@@ -18,7 +18,14 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -112,8 +119,9 @@ class MessageApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
 
+        // Read bytes directly so Jackson handles UTF-8 decoding (getContentAsString defaults to ISO-8859-1)
         RevealResponse revealed = objectMapper.readValue(
-                revealResult.getResponse().getContentAsString(), RevealResponse.class);
+                revealResult.getResponse().getContentAsByteArray(), RevealResponse.class);
         assertEquals(secret, revealed.message());
     }
 
@@ -264,5 +272,110 @@ class MessageApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"messageId\":\"\",\"aesKey\":\"\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ─── Infrastructure endpoints ─────────────────────────────────────────────
+
+    @Test
+    void status_endpoint_returns200() throws Exception {
+        mockMvc.perform(get("/status"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void actuatorHealth_returns200() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    // ─── Payload size guard ───────────────────────────────────────────────────
+
+    @Test
+    void create_payloadTooLarge_returns413() throws Exception {
+        // MockHttpServletRequest.getContentLengthLong() returns the length of the actual content
+        // bytes — there is no setContentLength() — so we must send a genuinely large body.
+        // ~1.1 MB of 'a' characters exceeds the 1 MB app.max-message-size limit.
+        String bigMessage = "a".repeat(1_100_000);
+        mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"" + bigMessage + "\"}"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.error").isString());
+    }
+
+    // ─── Idempotency edge cases ────────────────────────────────────────────────
+
+    @Test
+    void create_blankIdempotencyKey_treatedAsAbsent_creates201NotDuplicate() throws Exception {
+        String body = objectMapper.writeValueAsString(new CreateMessageRequest("blank idempotency key test"));
+
+        // Blank header must be treated as absent: two calls → two distinct messages (both 201)
+        MvcResult first = mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", "   ")
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        MvcResult second = mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", "   ")
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        CreateMessageResponse r1 = objectMapper.readValue(first.getResponse().getContentAsString(), CreateMessageResponse.class);
+        CreateMessageResponse r2 = objectMapper.readValue(second.getResponse().getContentAsString(), CreateMessageResponse.class);
+        assertNotEquals(r1.messageId(), r2.messageId(),
+                "Blank idempotency key must not trigger deduplication — two distinct messages must be created");
+    }
+
+    // ─── Concurrency ──────────────────────────────────────────────────────────
+
+    @Test
+    void reveal_concurrent_exactlyOneCallerSucceeds() throws Exception {
+        MvcResult createResult = mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateMessageRequest("concurrent reveal test"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        CreateMessageResponse created = objectMapper.readValue(
+                createResult.getResponse().getContentAsString(), CreateMessageResponse.class);
+        String revealBody = objectMapper.writeValueAsString(
+                new RevealRequest(created.messageId(), created.aesKey()));
+
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start    = new CountDownLatch(1);
+        CountDownLatch done     = new CountDownLatch(threads);
+        ConcurrentLinkedQueue<Integer> statuses = new ConcurrentLinkedQueue<>();
+
+        for (int i = 0; i < threads; i++) {
+            pool.submit(() -> {
+                try {
+                    start.await();
+                    MvcResult result = mockMvc.perform(post("/api/v1/messages/reveal")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(revealBody))
+                            .andReturn();
+                    statuses.add(result.getResponse().getStatus());
+                } catch (Exception e) {
+                    statuses.add(-1);
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        start.countDown();
+        assertTrue(done.await(15, TimeUnit.SECONDS), "All threads must finish within timeout");
+        pool.shutdownNow();
+
+        long successes = statuses.stream().filter(s -> s == 200).count();
+        long notFounds = statuses.stream().filter(s -> s == 404).count();
+        assertEquals(1, successes, "Exactly one reveal must succeed");
+        assertEquals(threads - 1, notFounds, "All other reveals must return 404");
     }
 }
