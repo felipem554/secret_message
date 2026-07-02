@@ -66,6 +66,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         long retryAfterSeconds = Math.max(1, probe.getNanosToWaitForRefill() / 1_000_000_000L);
         response.setStatus(429);
         response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));
+        response.setHeader("Cache-Control", "no-store");
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"rate limit exceeded\"}");
     }
