@@ -136,23 +136,39 @@ class SecretMessageServiceTest {
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("max attempts test");
         String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
 
-        for (int i = 0; i < 3; i++) {
-            try {
-                secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);
-            } catch (Exception ignored) {
-                // wrong-key attempts
-            }
+        for (int i = 0; i < 2; i++) {
+            MessageNotAvailableException ex = assertThrows(
+                    MessageNotAvailableException.class,
+                    () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey));
+            assertEquals(MessageNotAvailableException.Reason.WRONG_KEY, ex.getReason());
         }
 
-        // 4th attempt (any key) — counter now exceeds max-tries, service throws EXHAUSTED
-        MessageNotAvailableException ex = assertThrows(
+        MessageNotAvailableException exhausted = assertThrows(
                 MessageNotAvailableException.class,
-                () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), identifier.getAeskey()),
-                "Should throw MessageNotAvailableException after exceeding attempt limit");
+                () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey),
+                "The third wrong key attempt should exhaust and delete the message");
 
-        assertEquals(MessageNotAvailableException.Reason.EXHAUSTED, ex.getReason());
+        assertEquals(MessageNotAvailableException.Reason.EXHAUSTED, exhausted.getReason());
         assertNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
-                "Message should be deleted after attempts are exhausted");
+                "Message should be deleted on the third wrong-key attempt");
+    }
+
+    @Test
+    void correctKeyAfterTwoWrongAttemptsStillReveals() throws Exception {
+        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("correct key still works");
+        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+
+        for (int i = 0; i < 2; i++) {
+            assertThrows(MessageNotAvailableException.class,
+                    () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey));
+        }
+
+        String revealed = secretMessageService.getEncryptedMessageById(
+                identifier.getMessageId(), identifier.getAeskey());
+
+        assertEquals("correct key still works", revealed);
+        assertNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
+                "Successful reveal should delete the message");
     }
 
     @Test
