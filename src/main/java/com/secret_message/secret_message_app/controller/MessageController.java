@@ -4,6 +4,7 @@ import com.secret_message.secret_message_app.dto.CreateMessageRequest;
 import com.secret_message.secret_message_app.dto.CreateMessageResponse;
 import com.secret_message.secret_message_app.dto.RevealRequest;
 import com.secret_message.secret_message_app.dto.RevealResponse;
+import com.secret_message.secret_message_app.exception.InvalidRequestException;
 import com.secret_message.secret_message_app.exception.MessageNotAvailableException;
 import com.secret_message.secret_message_app.exception.PayloadTooLargeException;
 import com.secret_message.secret_message_app.idempotency.IdempotencyRecord;
@@ -22,7 +23,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Public HTTP API for the secret-message service.
@@ -58,13 +61,16 @@ public class MessageController {
             HttpServletRequest request) {
 
         long contentLength = request.getContentLengthLong();
-        if (contentLength > maxMessageSize) {
+        if (contentLength > maxMessageSize
+                || body.message().getBytes(StandardCharsets.UTF_8).length > maxMessageSize) {
             throw new PayloadTooLargeException(maxMessageSize);
         }
 
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+
+        if (normalizedIdempotencyKey != null) {
             String bodyHash = idempotencyService.hashBody(body.message());
-            Optional<IdempotencyRecord> existing = idempotencyService.findExisting(idempotencyKey, bodyHash);
+            Optional<IdempotencyRecord> existing = idempotencyService.findExisting(normalizedIdempotencyKey, bodyHash);
             if (existing.isPresent()) {
                 String recoveredKey = idempotencyService.recoverAesKey(existing.get());
                 return ResponseEntity.ok()
@@ -75,10 +81,19 @@ public class MessageController {
 
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(body.message());
 
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+        if (normalizedIdempotencyKey != null) {
             String bodyHash = idempotencyService.hashBody(body.message());
-            idempotencyService.store(
-                    idempotencyKey, bodyHash, identifier.getMessageId(), identifier.getAeskey());
+            boolean stored = idempotencyService.store(
+                    normalizedIdempotencyKey, bodyHash, identifier.getMessageId(), identifier.getAeskey());
+            if (!stored) {
+                secretMessageService.discardSecretMessage(identifier.getMessageId());
+                IdempotencyRecord existing = idempotencyService.findExisting(
+                        normalizedIdempotencyKey, bodyHash).orElseThrow();
+                String recoveredKey = idempotencyService.recoverAesKey(existing);
+                return ResponseEntity.ok()
+                        .header("Cache-Control", "no-store")
+                        .body(new CreateMessageResponse(existing.messageId(), recoveredKey, true));
+            }
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -89,10 +104,10 @@ public class MessageController {
     /**
      * Reveals a secret message exactly once.
      *
-     * <p>Atomically reads and deletes the message. On success the plaintext
-     * is returned and the message is gone. All failure conditions
-     * (not found, wrong key, attempts exhausted, concurrent reveal) return
-     * the same HTTP 404 with the same body — see GlobalExceptionHandler.
+     * <p>On success the plaintext is returned and the message is deleted.
+     * Concurrent reveal losers and all other failure conditions (not found,
+     * wrong key, attempts exhausted) return the same HTTP 404 with the same
+     * body — see GlobalExceptionHandler.
      */
     @PostMapping("/reveal")
     public ResponseEntity<RevealResponse> reveal(@Valid @RequestBody RevealRequest body) {
@@ -105,8 +120,24 @@ public class MessageController {
         } catch (MessageNotAvailableException e) {
             throw e;
         } catch (Exception e) {
-            // Crypto exceptions (wrong key) → same uniform 404
+            // Crypto exceptions (wrong key) -> same uniform 404
             throw new MessageNotAvailableException(MessageNotAvailableException.Reason.WRONG_KEY);
         }
+    }
+
+    private String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        String normalized = idempotencyKey.trim();
+        try {
+            UUID uuid = UUID.fromString(normalized);
+            if (uuid.version() != 4) {
+                throw new InvalidRequestException("idempotency key must be a UUIDv4");
+            }
+        } catch (IllegalArgumentException e) {
+            throw new InvalidRequestException("idempotency key must be a UUIDv4");
+        }
+        return normalized;
     }
 }

@@ -54,7 +54,7 @@ class IdempotencyServiceIntegrationTest {
         String messageId = UUID.randomUUID().toString();
         String aesKeyBase64 = freshAesKeyBase64();
 
-        idempotencyService.store(iKey, bodyHash, messageId, aesKeyBase64);
+        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, aesKeyBase64));
         Optional<IdempotencyRecord> found = idempotencyService.findExisting(iKey, bodyHash);
 
         assertTrue(found.isPresent(), "Record should be found after store");
@@ -76,7 +76,7 @@ class IdempotencyServiceIntegrationTest {
         String originalBody = "{\"message\":\"first\"}";
         String originalHash = idempotencyService.hashBody(originalBody);
 
-        idempotencyService.store(iKey, originalHash, UUID.randomUUID().toString(), freshAesKeyBase64());
+        assertTrue(idempotencyService.store(iKey, originalHash, UUID.randomUUID().toString(), freshAesKeyBase64()));
 
         String differentHash = idempotencyService.hashBody("{\"message\":\"different\"}");
         assertThrows(IdempotencyConflictException.class,
@@ -94,7 +94,7 @@ class IdempotencyServiceIntegrationTest {
         String messageId = UUID.randomUUID().toString();
         String originalAesKeyBase64 = freshAesKeyBase64();
 
-        idempotencyService.store(iKey, bodyHash, messageId, originalAesKeyBase64);
+        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, originalAesKeyBase64));
         IdempotencyRecord record = idempotencyService.findExisting(iKey, bodyHash).orElseThrow();
         String recovered = idempotencyService.recoverAesKey(record);
 
@@ -125,8 +125,8 @@ class IdempotencyServiceIntegrationTest {
         String firstMessageId  = UUID.randomUUID().toString();
         String secondMessageId = UUID.randomUUID().toString();
 
-        idempotencyService.store(iKey, bodyHash, firstMessageId,  freshAesKeyBase64());
-        idempotencyService.store(iKey, bodyHash, secondMessageId, freshAesKeyBase64());
+        assertTrue(idempotencyService.store(iKey, bodyHash, firstMessageId, freshAesKeyBase64()));
+        assertFalse(idempotencyService.store(iKey, bodyHash, secondMessageId, freshAesKeyBase64()));
 
         IdempotencyRecord found = idempotencyService.findExisting(iKey, bodyHash).orElseThrow();
         assertEquals(firstMessageId, found.messageId(),
