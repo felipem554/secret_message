@@ -17,13 +17,12 @@ java {
 
 repositories {
 	mavenCentral()
-	maven { url 'https://jitpack.io' } // Add this line
 }
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'io.nats:jnats:2.13.1'
-	implementation 'org.springframework.boot:spring-boot-starter-data-redis:3.5.5'
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
 	compileOnly 'org.projectlombok:lombok:1.18.34'
 	annotationProcessor 'org.projectlombok:lombok:1.18.34'
@@ -45,7 +44,7 @@ dependencies {
 	testImplementation 'org.testcontainers:junit-jupiter:1.21.0'
 //	testImplementation 'org.testcontainers:nats:1.18.3'
 //	testImplementation 'org.testcontainers:redis:1.18.3'
-	testImplementation 'org.mockito:mockito-junit-jupiter:5.12.0' // Updated Mockito version
+	testImplementation 'org.mockito:mockito-junit-jupiter:5.12.0'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.0")
@@ -66,5 +65,3 @@ test {
 		events 'skipped', 'passed', 'failed'
 	}
 }
-
-apply plugin: 'io.spring.dependency-management'
