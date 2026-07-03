@@ -73,8 +73,11 @@ public class IdempotencyService {
      * Stores a new record. The aesKeyBase64 is decoded, encrypted with MIEK,
      * and stored as Base64-encoded ciphertext. The plaintext AES key buffer
      * is zeroed before this method returns.
+     *
+     * @return true when this call created the idempotency record; false when
+     *         another request already created it.
      */
-    public void store(String idempotencyKey, String bodyHash, String messageId, String aesKeyBase64) {
+    public boolean store(String idempotencyKey, String bodyHash, String messageId, String aesKeyBase64) {
         byte[] aesKeyBytes = Base64.getDecoder().decode(aesKeyBase64);
         byte[] encrypted;
         try {
@@ -97,11 +100,12 @@ public class IdempotencyService {
             throw new IllegalStateException("failed to serialize idempotency record", e);
         }
 
-        redisTemplate.opsForValue().setIfAbsent(
+        Boolean stored = redisTemplate.opsForValue().setIfAbsent(
                 buildKey(idempotencyKey),
                 json,
                 Duration.ofDays(ttlDays)
         );
+        return Boolean.TRUE.equals(stored);
     }
 
     /**

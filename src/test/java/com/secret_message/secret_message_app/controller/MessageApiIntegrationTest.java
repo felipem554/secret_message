@@ -238,13 +238,42 @@ class MessageApiIntegrationTest {
                     .andExpect(status().isNotFound());
         }
 
-        // 4th attempt with correct key — message should be deleted
+        // Correct key after three wrong attempts must still return the uniform 404.
         mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new RevealRequest(created.messageId(), created.aesKey()))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("message not available"));
+    }
+
+    @Test
+    void reveal_correctKeyAfterTwoWrongAttempts_returnsPlaintext() throws Exception {
+        MvcResult createResult = mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new CreateMessageRequest("survives two wrong attempts"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        CreateMessageResponse created = objectMapper.readValue(
+                createResult.getResponse().getContentAsString(), CreateMessageResponse.class);
+
+        String wrongKey = "ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=";
+
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/api/v1/messages/reveal")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(
+                                    new RevealRequest(created.messageId(), wrongKey))))
+                    .andExpect(status().isNotFound());
+        }
+
+        mockMvc.perform(post("/api/v1/messages/reveal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new RevealRequest(created.messageId(), created.aesKey()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("survives two wrong attempts"));
     }
 
     // ─── Input validation ─────────────────────────────────────────────────────
@@ -305,6 +334,16 @@ class MessageApiIntegrationTest {
     }
 
     // ─── Idempotency edge cases ────────────────────────────────────────────────
+
+    @Test
+    void create_invalidIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/api/v1/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Idempotency-Key", "not-a-uuid")
+                        .content(objectMapper.writeValueAsString(new CreateMessageRequest("invalid idempotency key"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("idempotency key must be a UUIDv4"));
+    }
 
     @Test
     void create_blankIdempotencyKey_treatedAsAbsent_creates201NotDuplicate() throws Exception {

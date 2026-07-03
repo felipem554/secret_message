@@ -38,25 +38,19 @@ public class SecretMessageService {
     }
 
     /**
-     * Retrieves and deletes a message by ID and AES key.
-     *
-     * <p>Throws {@link MessageNotAvailableException} for all failure conditions
-     * that the HTTP layer should surface as 404. For the NATS path, callers
-     * catch this and return {@link #MAX_ATTEMPTS_MESSAGE} or a generic error.
-     *
-     * <p>Checked crypto exceptions (wrong key path) are re-thrown as-is so
-     * the NATS layer can distinguish them from the business-level failures.
+     * Deletes a newly-created message that lost an idempotent create race.
      */
-    public String getEncryptedMessageById(String messageId, String aesKey)
-            throws InvalidAlgorithmParameterException, NoSuchPaddingException,
-                   IllegalBlockSizeException, NoSuchAlgorithmException,
-                   BadPaddingException, InvalidKeyException {
+    public void discardSecretMessage(String messageId) {
+        redisCacheManager.deleteEncryptedMessage(messageId);
+        redisCacheManager.resetAttempt(messageId);
+    }
 
-        if (redisCacheManager.incrementAndCheckAttempt(messageId)) {
-            redisCacheManager.deleteEncryptedMessage(messageId);
-            throw new MessageNotAvailableException(MessageNotAvailableException.Reason.EXHAUSTED);
-        }
-
+    /**
+     * Reveals a message exactly once. Only failed decryptions count toward
+     * the 3-strike limit; a correct key remains valid after one or two wrong
+     * attempts. All reveal failures are normalized for the HTTP layer.
+     */
+    public String getEncryptedMessageById(String messageId, String aesKey) {
         try {
             String encryptedMessage = redisCacheManager.getEncryptedMessageById(messageId);
             if (encryptedMessage == null) {
@@ -69,8 +63,12 @@ public class SecretMessageService {
             redisCacheManager.resetAttempt(messageId);
             return decryptedMessage;
         } catch (InvalidKeyException | NoSuchAlgorithmException | NoSuchPaddingException |
-                 InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
-            throw e;
+                 InvalidAlgorithmParameterException | IllegalBlockSizeException |
+                 BadPaddingException | IllegalArgumentException e) {
+            if (redisCacheManager.incrementAndCheckAttempt(messageId)) {
+                throw new MessageNotAvailableException(MessageNotAvailableException.Reason.EXHAUSTED);
+            }
+            throw new MessageNotAvailableException(MessageNotAvailableException.Reason.WRONG_KEY);
         } catch (MessageNotAvailableException e) {
             throw e;
         } catch (Exception e) {

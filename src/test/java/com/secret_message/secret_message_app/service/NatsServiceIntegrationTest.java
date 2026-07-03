@@ -157,18 +157,25 @@ class NatsServiceIntegrationTest {
         SecretMessageIdentifier id = objectMapper.readValue(saveReply.getData(), SecretMessageIdentifier.class);
 
         SecretMessageIdentifier wrongId = identifierWithWrongKey(id.getMessageId());
-        for (int i = 0; i < 3; i++) {
-            natsConnection.request("receive.msg", objectMapper.writeValueAsBytes(wrongId), REPLY_TIMEOUT);
+        for (int i = 0; i < 2; i++) {
+            Message wrongReply = natsConnection.request("receive.msg",
+                    objectMapper.writeValueAsBytes(wrongId), REPLY_TIMEOUT);
+            assertNotNull(wrongReply);
+            assertTrue(errorBody(wrongReply).contains("Message not available"));
         }
 
-        // 4th attempt with correct key — counter exceeded, service throws EXHAUSTED
-        Message reply = natsConnection.request("receive.msg",
-                objectMapper.writeValueAsBytes(id), REPLY_TIMEOUT);
-        assertNotNull(reply);
+        Message exhaustedReply = natsConnection.request("receive.msg",
+                objectMapper.writeValueAsBytes(wrongId), REPLY_TIMEOUT);
+        assertNotNull(exhaustedReply);
 
-        Map<?, ?> body = objectMapper.readValue(reply.getData(), Map.class);
-        assertEquals(SecretMessageService.MAX_ATTEMPTS_MESSAGE, body.get("error"),
-                "Exhausted path must reply with the MAX_ATTEMPTS_MESSAGE sentinel");
+        Map<?, ?> exhaustedBody = objectMapper.readValue(exhaustedReply.getData(), Map.class);
+        assertEquals(SecretMessageService.MAX_ATTEMPTS_MESSAGE, exhaustedBody.get("error"),
+                "Third wrong attempt must reply with the MAX_ATTEMPTS_MESSAGE sentinel");
+
+        Message correctKeyAfterExhaustion = natsConnection.request("receive.msg",
+                objectMapper.writeValueAsBytes(id), REPLY_TIMEOUT);
+        assertNotNull(correctKeyAfterExhaustion);
+        assertTrue(errorBody(correctKeyAfterExhaustion).contains("Message not available"));
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

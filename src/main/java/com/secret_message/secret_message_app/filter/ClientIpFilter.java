@@ -56,6 +56,7 @@ public class ClientIpFilter extends OncePerRequestFilter {
         if (ip == null || ip.isEmpty() || "0.0.0.0".equals(ip)) {
             if (isProductionProfile()) {
                 response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.setHeader("Cache-Control", "no-store");
                 response.setContentType("application/json");
                 response.getWriter().write("{\"error\":\"client IP not resolvable\"}");
                 return;

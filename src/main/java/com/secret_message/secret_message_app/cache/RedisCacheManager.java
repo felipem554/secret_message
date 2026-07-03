@@ -56,7 +56,7 @@ public class RedisCacheManager {
         if (attempts != null && attempts == 1) {
             redisTemplate.expire(attemptKey, messageExpiryTime, TimeUnit.DAYS);
         }
-        if (attempts != null && attempts > maxTries) {
+        if (attempts != null && attempts >= maxTries) {
             deleteEncryptedMessage(messageId);
             return true;
         }
