@@ -18,48 +18,36 @@ Messages are encrypted with AES-256 before storage. The server never persists th
 
 ## Architecture
 
-```
-Public clients
-     │
-     ▼ HTTPS (TLS at reverse proxy)
-┌────────────────────────────────┐
-│  ClientIpFilter (XFF trust)    │
-│  RateLimitFilter (100/day/IP)  │
-│  MessageController             │  POST /api/v1/messages
-│  MessageController             │  POST /api/v1/messages/reveal
-└──────────────┬─────────────────┘
-               │
-               ▼
-┌──────────────────────────────────┐
-│  SecretMessageService            │  encrypt / decrypt / attempt-count
-│  IdempotencyService              │  duplicate-create prevention
-└──────────┬───────────────────────┘
-           │
-     ┌─────┴──────┐
-     ▼            ▼
-  Redis        NATS (internal)
-messages:*     save.msg / receive.msg
-attempts:*
-idempotency:*
-```
+The service exposes two transports that both delegate to a single business-logic layer. Neither transport owns any crypto or storage logic.
 
-**NATS is now an internal transport only.** Backend services and scripts can still publish to `save.msg` / `receive.msg` directly. Public clients use the HTTP API.
+- **HTTP API** (`/api/v1/*`) — the public interface. Requests pass through `ClientIpFilter` (resolves the trusted client IP from `X-Forwarded-For`) and `RateLimitFilter` (100 req/day/IP, Redis-backed) before reaching `MessageController`.
+- **NATS** (`save.msg` / `receive.msg`) — an internal-only transport. Backend services and scripts can publish to these subjects directly; they are not rate-limited or exposed to the public network.
+
+Both transports call `SecretMessageService`, which performs AES-256 encryption/decryption, tracks failed-attempt counters, and issues atomic Redis operations. On the HTTP create path, `IdempotencyService` sits in front to prevent duplicate messages on client retries. All state lives in Redis (`messages:*`, `attempts:*`, `idempotency:*`, `ratelimit:*`), each key carrying a TTL.
+
+| Layer | Components | Responsibility |
+|-------|------------|----------------|
+| Edge (HTTP only) | `ClientIpFilter`, `RateLimitFilter` | Trusted-IP resolution, per-IP rate limiting |
+| Transport | `MessageController` (HTTP), `NatsService` (internal) | Request/response handling — no business logic |
+| Business logic | `SecretMessageService`, `IdempotencyService` | Encrypt/decrypt, attempt counting, atomic delete, duplicate prevention |
+| Storage | Redis | Encrypted payloads + counters + idempotency records, all TTL-bound |
+
+**NATS is an internal transport only.** Public clients use the HTTP API; backend services and scripts can still publish to `save.msg` / `receive.msg` directly.
 
 ### Request flow — HTTP
 
-```
-POST /api/v1/messages  {"message": "..."}
-  → IdempotencyService (duplicate check)
-  → SecretMessageService.createSecretMessage
-  → AES-256 encrypt (random key + IV)
-  → Redis  messages:<id>  (TTL: auto-delete-days)
-  ← 201  {"messageId": "...", "aesKey": "..."}
+**Create** — `POST /api/v1/messages {"message": "..."}`
 
-POST /api/v1/messages/reveal  {"messageId": "...", "aesKey": "..."}
-  → SecretMessageService.getEncryptedMessageById
-  → Redis fetch → AES-256 decrypt → Redis atomic delete
-  ← 200  {"message": "..."}
-```
+1. `IdempotencyService` checks for a prior record when an `Idempotency-Key` is supplied.
+2. `SecretMessageService.createSecretMessage` encrypts the payload with AES-256 under a fresh random key + IV.
+3. The ciphertext is stored at `messages:<id>` with a TTL of `app.auto-delete-days`.
+4. Responds `201` with `{"messageId": "...", "aesKey": "..."}` (the server never persists the key).
+
+**Reveal** — `POST /api/v1/messages/reveal {"messageId": "...", "aesKey": "..."}`
+
+1. `SecretMessageService.getEncryptedMessageById` fetches the ciphertext from Redis.
+2. It decrypts with the supplied key, then atomically deletes the message on success.
+3. Responds `200` with `{"message": "..."}`. A wrong key increments `attempts:<id>`; three failures delete the message. All failures return a uniform `404`.
 
 ## Quick Start
 
