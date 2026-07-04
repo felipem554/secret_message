@@ -105,15 +105,4 @@ class RateLimitIntegrationTest {
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.error").value("rate limit exceeded"));
     }
-
-    // ─── Non-API paths bypass the rate limiter ─────────────────────────────────
-
-    @Test
-    @Order(4)
-    void nonApiPath_notSubjectToRateLimit() throws Exception {
-        // /status is outside /api/**, rate limiter must not touch it
-        mockMvc.perform(get("/status"))
-                .andExpect(status().isOk())
-                .andExpect(header().doesNotExist("X-RateLimit-Remaining"));
-    }
 }

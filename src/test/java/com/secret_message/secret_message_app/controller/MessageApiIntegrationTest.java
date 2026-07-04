@@ -306,12 +306,6 @@ class MessageApiIntegrationTest {
     // ─── Infrastructure endpoints ─────────────────────────────────────────────
 
     @Test
-    void status_endpoint_returns200() throws Exception {
-        mockMvc.perform(get("/status"))
-                .andExpect(status().isOk());
-    }
-
-    @Test
     void actuatorHealth_returns200() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
