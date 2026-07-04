@@ -215,7 +215,7 @@ nats request receive.msg '{"messageId":"...","aeskey":"..."}' --server nats://lo
 - **No caching**: all API responses carry `Cache-Control: no-store`.
 - **TLS**: must be terminated at the reverse proxy (nginx, Caddy, cloud LB). The app does not serve TLS directly.
 
-See `docs/MEMORY_HARDENING.md` for JVM/OS-level key-material protections.
+See `docs/MEMORY_HARDENING.md` for the key-material hardening plan and `docs/JVM_MEMORY_SECURITY_PRIMER.md` for the JVM memory primer.
 See `docs/HTTP_API_DESIGN.md` for the full design rationale.
 See `docs/STORAGE_NATS_VS_REDIS.md` (ADR-0001) for the Redis vs NATS JetStream architecture decision.
 

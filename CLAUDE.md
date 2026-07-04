@@ -115,7 +115,7 @@ Internal client → NATS receive.msg ({messageId, aeskey})
 - Three failed decryption attempts trigger deletion (global counter, not per-IP).
 - All reveal failure cases return identical HTTP 404 (uniform response, no information leakage).
 
-See `docs/MEMORY_HARDENING.md` for JVM/OS-level controls on key material.
+See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan and `docs/JVM_MEMORY_SECURITY_PRIMER.md` for the JVM memory primer.
 
 ### Redis key schema
 
@@ -154,6 +154,7 @@ See `docs/MEMORY_HARDENING.md` for JVM/OS-level controls on key material.
 | File | Contents |
 |------|----------|
 | `docs/HTTP_API_DESIGN.md` | Full HTTP API design: endpoints, error model, idempotency, rate limiting, security decisions |
-| `docs/MEMORY_HARDENING.md` | JVM/OS controls for protecting AES key material against heap dumps and memory scrapers |
+| `docs/MEMORY_HARDENING.md` | Operational JVM/OS key-material hardening plan and verification checklist |
+| `docs/JVM_MEMORY_SECURITY_PRIMER.md` | Didactic JVM memory, GC, leak, and secret-handling primer |
 | `docs/STORAGE_NATS_VS_REDIS.md` | ADR-0001: why Redis was chosen over NATS JetStream as the message store |
 | `docs/RATE_LIMITING.md` | Rate limiting options and Bucket4j implementation notes |

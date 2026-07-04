@@ -1,177 +1,439 @@
 # Memory Hardening Plan
 
+## Purpose
+
+This is the implementation plan for reducing key-material exposure in JVM
+memory. It is intentionally operational: what to change, how to verify it, and
+what counts as complete.
+
+For the learning background behind this plan, read
+[`JVM_MEMORY_SECURITY_PRIMER.md`](JVM_MEMORY_SECURITY_PRIMER.md) first. That
+primer explains heap vs stack, garbage collection, `String` risks, memory leaks,
+and the verification labs in more detail.
+
 ## Goal
 
-The HTTP API generates AES-256 keys server-side and returns them to the client. Between generation and the response being flushed, the key exists in JVM memory. This document defines the controls that minimize the window of exposure and prevent that key from leaking via heap dumps, core dumps, swap, debugger attachment, or accidental logging.
+The service generates an AES-256 key for each secret message and returns that
+key to the client. For a short time, the key exists inside the JVM. The goal is
+to reduce the chance that key material leaks through:
 
-## Threat model
+- JVM heap dumps.
+- OS core dumps.
+- Swap.
+- Debugger or Java-agent attachment.
+- `ptrace` or `/proc/<pid>/mem` access.
+- Application logs.
+- Unnecessary long-lived Java object references.
 
-We assume an attacker who can do **one** of the following:
+The accepted security posture is: key material may exist briefly in JVM memory,
+but there should be no easy path for an unprivileged attacker, accidental heap
+dump, core dump, swap file, debugger, or log line to recover it.
 
-1. Trigger or read a JVM heap dump (`jmap`, `kill -3`, OOM auto-dump, JMX `HotSpotDiagnosticMXBean`).
+## Sensitive Material
+
+This plan protects two classes of key material.
+
+1. **Per-message AES keys**
+   - Generated for each new message.
+   - Returned to the client.
+   - Used later by the client to reveal the message.
+   - Should exist in server memory for the shortest practical time.
+
+2. **Master Idempotency Encryption Key (MIEK)**
+   - Loaded from `app.idempotency.master-key`.
+   - Used to encrypt per-message AES keys stored in idempotency records.
+   - Lives for the process lifetime.
+   - Must never be logged, dumped, or copied into uncontrolled objects.
+
+Message plaintext is also sensitive, but this plan focuses on key material
+because key leakage can expose encrypted messages beyond one request.
+
+## Threat Model
+
+We assume an attacker can do one of the following:
+
+1. Trigger or read a JVM heap dump, such as through `jmap`, OOM heap dump flags,
+   JMX, or `HotSpotDiagnosticMXBean`.
 2. Trigger or read an OS core dump.
-3. Read process memory directly (`ptrace`, `/proc/<pid>/mem`).
+3. Read process memory directly through `ptrace` or `/proc/<pid>/mem`.
 4. Read swap-backed pages from disk after the process has terminated.
 5. Read application logs.
 
-We **do not** defend against:
+We do not defend against:
 
-- An attacker with root on the host who can read live memory at will. No userspace control defeats this; that is an infrastructure problem.
-- Side-channel attacks (cache timing, Spectre-class).
+- An attacker with root on the host who can freely read live memory.
+- CPU side-channel attacks such as Spectre-class attacks.
+- A malicious JVM, malicious OS, or compromised container runtime.
+- Hardware-level compromise.
 
-The realistic ceiling is "raise the cost from trivial to requires serious system access." This plan targets that ceiling.
+The realistic goal is to raise the cost from "trivial accidental leak" to
+"requires serious system access."
 
----
+## Current Key Lifecycle
 
-## Application-layer controls
+The current create flow is:
 
-### 1. Never store key material in `String`
+1. `SecretMessageService.createSecretMessage(...)` generates a `SecretKey`.
+2. `CryptoUtil.encryptMessage(...)` calls `secretKey.getEncoded()`.
+3. `SecretMessageIdentifier` stores the key as Base64 text in `aeskey`.
+4. `MessageController` copies that value into `CreateMessageResponse`.
+5. Jackson serializes the response to JSON.
+6. If idempotency is enabled, `IdempotencyService.store(...)` decodes the
+   Base64 string back into bytes and encrypts it with the MIEK.
 
-`String` is immutable in Java. Once a key lands in a `String`, it cannot be zeroed and lives in the heap until garbage collected (and possibly longer, if it ends up interned). All key material must be carried as `byte[]` or `char[]`.
+Current gaps:
 
-Refactor:
+- `SecretMessageIdentifier.aeskey` is a `String`.
+- `CreateMessageResponse.aesKey` is a `String`.
+- `CryptoUtil.decryptMessage(String encryptedContent, String aesKey)` accepts a
+  key as `String`.
+- `IdempotencyService.store(...)` accepts `aesKeyBase64` as `String`.
+- `docker-entrypoint.sh` does not currently pass production hardening JVM flags.
+- Debug mode can enable JDWP when `DEBUG=true`; this must be explicitly blocked
+  in production.
 
-- `SecretMessageIdentifier.aeskey` → `byte[]` internally; expose Base64-encoded `String` only at the JSON boundary.
-- `CryptoUtil.encryptMessage(String, String)` → `encryptMessage(byte[] plaintext, byte[] key)`. Plaintext can stay `String` for now since it is the user's payload, not the credential.
+## Application Hardening Tasks
 
-### 2. Zero buffers immediately after use
+### 1. Keep Key Material Out Of Internal `String` Values
 
-Wrap every key-handling call site in a `try { ... } finally { Arrays.fill(keyBytes, (byte) 0); }` block. Concretely:
+Target state:
 
-- Inside `SecretMessageService.createSecretMessage`, after the response has been serialized and written to the output stream, zero the source buffer.
-- Inside `CryptoUtil.encryptMessage` / `decryptMessage`, zero any local copy of the key after the `Cipher` operation completes.
-- Avoid passing the key into `ByteBuffer.wrap` without controlling the lifetime of the backing array.
+- `SecretMessageIdentifier` stores key bytes as `byte[]`, not `SecretKey` and
+  not Base64 `String`.
+- `CryptoUtil` accepts `byte[] keyBytes` for encryption/decryption operations.
+- `IdempotencyService.store(...)` accepts `byte[] aesKeyBytes`.
+- The HTTP response boundary is the only layer that exposes a Base64 key to
+  JSON.
+- The Base64 value exists only long enough to write the HTTP response.
 
-### 3. Custom Jackson serializer for the response
+Acceptance criteria:
 
-Standard Jackson serialization copies the source `byte[]` into intermediate buffers as it Base64-encodes. Those intermediates are not under our control and are not zeroed.
+- No internal domain or service object stores the per-message AES key as
+  `String`.
+- No internal service method accepts the per-message AES key as `String`.
+- A search for `aesKey`, `aeskey`, `secretKey`, and `getEncoded()` is reviewed;
+  each remaining match has a documented reason to exist.
 
-Replace the response DTO's serializer with one that:
+### 2. Zero Temporary Key Buffers
 
-1. Base64-encodes directly into the HTTP response stream's buffer.
-2. Zeros both the source key bytes and the encoded buffer immediately after `flush()`.
+Use `try/finally` around every application-owned buffer that contains key bytes:
 
-This keeps the key bytes in exactly one place at a time and guarantees they are wiped before the request handler returns.
-
-### 4. Logging audit and redaction
-
-- CI lint rule that fails the build if any logger statement references a variable named `key`, `aesKey`, `secret`, `password`, or the response DTO type. Use ArchUnit or a simple Checkstyle pattern.
-- Logback filter that redacts known field names from any structured log event, as a defense-in-depth fallback.
-- No request/response body logging in production. If a debug-level body logger exists, gate it behind a profile that is never active in production.
-
-### 5. Disable JVM agent attachment
-
-JMX and Java agents can read arbitrary heap state. Production JVM flags:
-
+```java
+byte[] keyBytes = generateKeyBytes();
+try {
+    // use keyBytes
+} finally {
+    Arrays.fill(keyBytes, (byte) 0);
+}
 ```
+
+Zeroing is best-effort. It removes the application-owned copy, but the JVM,
+crypto provider, Base64 encoder, or serializer may have made other copies.
+
+Acceptance criteria:
+
+- Every method that creates, decodes, derives, or copies a key has a visible
+  owner responsible for wiping it.
+- Cleanup happens on both success and failure paths.
+- Tests cover failure paths around encryption, idempotency storage, and response
+  serialization.
+
+### 3. Reduce Copies During Response Serialization
+
+Standard Jackson serialization can create intermediate buffers while turning a
+`byte[]` into Base64 JSON text. Those copies are not easy to wipe.
+
+Preferred implementation options:
+
+1. Use a custom Jackson serializer for the create response that writes the
+   encoded key directly to the JSON generator and wipes application-owned
+   buffers immediately after writing.
+2. Use `StreamingResponseBody` for the create endpoint and write the response
+   manually, wiping both source and encoded buffers after the stream is flushed.
+
+Do not try to wipe the key in `SecretMessageService` after returning the DTO.
+The service does not control when Spring/Jackson finishes writing the HTTP
+response.
+
+Acceptance criteria:
+
+- The component that writes the HTTP response also owns final key cleanup.
+- A test proves cleanup happens after response serialization.
+- The code documents any unavoidable framework-owned copies.
+
+### 4. Prevent Secret Logging
+
+Never log:
+
+- AES keys.
+- MIEK.
+- Request bodies.
+- Response bodies.
+- `CreateMessageResponse`.
+- Exceptions that include raw request or response payloads.
+
+Add a CI guard that fails if logger calls reference known secret-bearing objects
+or obvious secret variable names such as `aesKey`, `secretKey`, `password`,
+`token`, or response DTOs. Avoid a naive ban on every variable named `key`;
+values such as idempotency keys may be safe to log only if the API policy
+explicitly allows it.
+
+Acceptance criteria:
+
+- Integration tests can run with verbose logging and no Base64 key appears in
+  captured logs.
+- Production does not enable request/response body logging.
+
+### 5. Make Debug Mode Explicitly Non-Production
+
+The Docker entrypoint supports JDWP when `DEBUG=true`. That is useful locally,
+but a debugger can inspect heap state and read keys.
+
+Production must not expose JDWP or dynamic attach.
+
+Acceptance criteria:
+
+- Production deployment sets `DEBUG=false`.
+- Port `5005` is not published in production.
+- Production startup fails fast if both `DEBUG=true` and
+  `APP_ENV=production` are present.
+
+## JVM Runtime Hardening Tasks
+
+### 1. Disable Dynamic Attach
+
+Use these production JVM flags:
+
+```text
 -XX:+DisableAttachMechanism
 -Dcom.sun.management.jmxremote=false
 ```
 
-`-XX:+DisableAttachMechanism` blocks `jmap`, `jstack`, and dynamic agent loading on the running process.
+`-XX:+DisableAttachMechanism` blocks common tools such as `jmap`, `jstack`, and
+dynamic agent loading against the running process.
 
----
+Acceptance criteria:
 
-## JVM-layer controls
+- A staging check confirms `jcmd`, `jmap`, and remote JMX cannot attach.
 
-### 6. Disable heap dumps in production
+### 2. Disable Heap Dump Creation
 
-Remove `-XX:+HeapDumpOnOutOfMemoryError` from production JVM args. Set:
+Do not run production with:
 
+```text
+-XX:+HeapDumpOnOutOfMemoryError
 ```
+
+Prefer failing closed on OOM:
+
+```text
 -XX:OnOutOfMemoryError="kill -9 %p"
 ```
 
-so the process aborts on OOM without writing a heap dump file. This loses crash forensics — that is the trade. Heap dumps are the single largest exposure vector and the JVM offers no way to scrub key material before writing one.
+This sacrifices crash forensics to avoid writing a heap dump full of secrets.
 
-### 7. Disable HotSpot diagnostic MBean
+Acceptance criteria:
 
-The `HotSpotDiagnosticMXBean.dumpHeap` operation can write a heap dump on demand. Implicitly disabled by `-XX:+DisableAttachMechanism` above, but worth verifying in a staging run.
+- Production JVM args do not include `-XX:+HeapDumpOnOutOfMemoryError`.
+- Staging OOM validation confirms no heap dump is written.
 
----
+### 3. Wire JVM Options Into The Container
 
-## OS-layer controls
+The entrypoint should support a controlled production option variable, for
+example:
 
-### 8. Disable core dumps
+```sh
+exec java $JAVA_OPTS -jar app.jar
+```
+
+Then production can set:
+
+```text
+JAVA_OPTS="-XX:+DisableAttachMechanism -Dcom.sun.management.jmxremote=false -XX:OnOutOfMemoryError='kill -9 %p'"
+```
+
+Be careful with shell quoting in Docker and Compose. Test the final rendered
+command with `docker compose config`.
+
+Acceptance criteria:
+
+- `docker compose exec app ps` shows the hardening flags in the Java command.
+- The final deployment manifest includes the same flags.
+
+## OS And Container Hardening Tasks
+
+### 1. Disable Core Dumps
 
 In the container entrypoint or systemd unit:
 
-```
+```sh
 ulimit -c 0
 ```
 
-Or for Docker:
-
-```
-docker run --ulimit core=0 ...
-```
-
-Or in `docker-compose.yml`:
+In Docker Compose:
 
 ```yaml
 ulimits:
   core: 0
 ```
 
-### 9. Disable swap or bound it to zero
+Acceptance criteria:
 
-If the JVM heap is paged to swap, the pages persist on disk after the process exits. Either disable swap on the host (`swapoff -a`) or bound the container's swap to its memory limit:
+- A staging crash test confirms no core file is produced.
+
+### 2. Disable Swap For The Container
+
+If heap pages are swapped to disk, secrets may remain on disk after the process
+exits.
+
+In Docker Compose:
 
 ```yaml
 mem_limit: 512m
 memswap_limit: 512m
 ```
 
-`memswap_limit == mem_limit` means zero swap available to the container.
+`memswap_limit == mem_limit` means the container gets no additional swap.
 
-### 10. Restrict ptrace and `/proc` access
+Acceptance criteria:
 
-On the host kernel:
+- Container swap is disabled or bounded to the memory limit.
+- Stress testing confirms the process is OOM-killed instead of swapping.
 
-```
+### 3. Restrict `ptrace`
+
+On Linux hosts:
+
+```sh
 sysctl -w kernel.yama.ptrace_scope=2
 ```
-
-`ptrace_scope=2` requires `CAP_SYS_PTRACE` for any cross-process ptrace, blocking standard memory-reading attacks from a compromised non-root user.
 
 In the container:
 
 ```yaml
 cap_drop:
-  - SYS_PTRACE
+  - ALL
+security_opt:
+  - no-new-privileges:true
 ```
 
-### 11. Run as unprivileged user
+Re-add only the capabilities the service truly needs. A Spring Boot service on
+port 8080 usually needs none.
 
-The Spring Boot container must not run as root. Add to the Dockerfile:
+Acceptance criteria:
 
-```dockerfile
-RUN addgroup --system app && adduser --system --ingroup app app
-USER app
-```
+- The app does not have `CAP_SYS_PTRACE`.
+- `/proc/<pid>/mem` cannot be read by another unprivileged process.
 
-Combined with `cap_drop: [ALL]` and explicit re-add of only `NET_BIND_SERVICE` if needed.
+### 4. Run As A Non-Root User
 
----
+The Dockerfile already creates and uses `appuser`. Keep that requirement in
+place.
 
-## Verification
+Acceptance criteria:
 
-Hardening is invisible until it is tested. Add to the staging pipeline:
+- `docker compose exec app id` shows a non-root user.
+- Runtime manifests do not override the user back to root.
 
-1. **Heap dump scan.** After a request that creates a known-secret message, force a heap dump (`jmap` from a privileged side container) and `grep` for the secret pattern. The secret should not appear after the response is flushed. Fail the pipeline if it does.
-2. **Core dump test.** Trigger a `SIGSEGV` on the JVM. Confirm no core file is produced.
-3. **Swap test.** Stress the container above its memory limit. Confirm it is OOM-killed and no swap file grows on the host.
-4. **Logging test.** Run the integration suite with `TRACE` logging enabled. `grep` the captured logs for any Base64 key pattern. Fail the suite if found.
+## Verification Plan
 
-These run periodically, not per-PR — they need privileged container access — but they are the only honest validation that the application-layer controls are working.
+Some checks require privileged local or staging access and should run
+periodically rather than on every PR.
 
----
+1. **Heap dump scan**
+   - Create a known-marker message/key in a controlled environment.
+   - Take a heap dump after the response is flushed.
+   - Search for the marker.
+   - Fail the check if the marker appears in a long-lived object path.
 
-## What this plan does not do
+2. **Logging leak test**
+   - Run integration tests with verbose logging.
+   - Capture logs.
+   - Search for generated AES keys, request bodies, and response bodies.
 
-- It does not protect the key in transit. That is TLS termination at the reverse proxy, covered separately.
-- It does not protect the key on the **client's** machine after they receive it. That is the client's responsibility; the API contract makes clear the key is one-shot and must be discarded after use.
-- It does not protect against an attacker with `CAP_SYS_PTRACE` or root inside the container. Container escape and privilege escalation are out of scope for this document.
-- It does not encrypt the heap itself. That would require a JVM with hardware-enclave support (Intel SGX, AWS Nitro Enclaves), which is a much larger architectural decision than this service warrants.
+3. **Runtime attach test**
+   - Start the container with production JVM flags.
+   - Confirm `jcmd`, `jmap`, and remote JMX cannot attach.
 
-The plan assumes that "key in cleartext in JVM memory for a few milliseconds, with no path for an unprivileged attacker to read it" is the correct security posture for this service. If that assumption changes — for example, if the service moves to handle higher-classification material — the right next step is enclaves, not more zeroing.
+4. **Core dump test**
+   - Trigger a controlled JVM crash in staging.
+   - Confirm no core file is produced.
+
+5. **Swap test**
+   - Stress the container above its memory limit.
+   - Confirm it is OOM-killed and does not swap.
+
+6. **Memory leak review**
+   - Confirm Redis idempotency records have TTLs.
+   - Confirm attempt counters have TTLs.
+   - Confirm request size limits are enforced.
+   - Confirm NATS subscribers do not accumulate duplicate handlers.
+
+## Implementation Milestones
+
+### Milestone 1: Document The Current Key Flow
+
+Deliverables:
+
+- A short diagram or comment showing the AES key path from generation to HTTP
+  response.
+- A list of every current `String` copy of the AES key.
+
+### Milestone 2: Convert Internal Key Flow To `byte[]`
+
+Deliverables:
+
+- No service-layer AES key as `String`.
+- Key-owning objects implement explicit cleanup.
+- Unit tests prove cleanup on success and failure.
+
+### Milestone 3: Harden Response Serialization
+
+Deliverables:
+
+- Base64 encoding happens at the HTTP boundary.
+- Cleanup happens after serialization.
+- The remaining framework-owned copies are documented.
+
+### Milestone 4: Add Runtime Flags
+
+Deliverables:
+
+- Production Java command includes attach/JMX/heap-dump hardening.
+- Debug mode is blocked in production.
+- Compose or deployment config disables core dumps, swap, and ptrace.
+
+### Milestone 5: Add Verification
+
+Deliverables:
+
+- Logging leak test.
+- Heap dump scan procedure.
+- Runtime attach check.
+- Memory leak review checklist.
+
+## Review Checklist
+
+Before marking memory hardening complete, answer these questions:
+
+- Where is the per-message AES key generated?
+- What object owns the key bytes at each step?
+- Who wipes each key buffer?
+- Where does the key first become Base64 text?
+- Can the key become part of a log line, exception, metric, or trace?
+- Can production write heap dumps or core dumps?
+- Can production attach a debugger or Java agent?
+- Can a non-root process read this process memory?
+- Are Redis keys bounded by TTL?
+- Are request sizes bounded?
+- What verification proves the answers above?
+
+## Out Of Scope
+
+This plan does not:
+
+- Protect the key in transit. That is handled by TLS termination.
+- Protect the key on the client after the client receives it.
+- Defeat root access on the host.
+- Encrypt the JVM heap.
+- Provide hardware enclave isolation.
