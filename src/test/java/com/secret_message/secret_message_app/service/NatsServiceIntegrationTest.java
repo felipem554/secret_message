@@ -183,7 +183,7 @@ class NatsServiceIntegrationTest {
     private SecretMessageIdentifier identifierWithWrongKey(String messageId) {
         SecretMessageIdentifier id = new SecretMessageIdentifier();
         id.setMessageId(messageId);
-        id.setAeskey(WRONG_KEY);
+        id.setAeskey(java.util.Base64.getDecoder().decode(WRONG_KEY));
         return id;
     }
 

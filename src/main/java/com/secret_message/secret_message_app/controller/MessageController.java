@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,7 +74,8 @@ public class MessageController {
             String bodyHash = idempotencyService.hashBody(body.message());
             Optional<IdempotencyRecord> existing = idempotencyService.findExisting(normalizedIdempotencyKey, bodyHash);
             if (existing.isPresent()) {
-                String recoveredKey = idempotencyService.recoverAesKey(existing.get());
+                // recoverAesKey returns a fresh buffer; the response serializer wipes it.
+                byte[] recoveredKey = idempotencyService.recoverAesKey(existing.get());
                 return ResponseEntity.ok()
                         .header("Cache-Control", "no-store")
                         .body(new CreateMessageResponse(existing.get().messageId(), recoveredKey, true));
@@ -87,9 +90,10 @@ public class MessageController {
                     normalizedIdempotencyKey, bodyHash, identifier.getMessageId(), identifier.getAeskey());
             if (!stored) {
                 secretMessageService.discardSecretMessage(identifier.getMessageId());
+                identifier.wipe();
                 IdempotencyRecord existing = idempotencyService.findExisting(
                         normalizedIdempotencyKey, bodyHash).orElseThrow();
-                String recoveredKey = idempotencyService.recoverAesKey(existing);
+                byte[] recoveredKey = idempotencyService.recoverAesKey(existing);
                 return ResponseEntity.ok()
                         .header("Cache-Control", "no-store")
                         .body(new CreateMessageResponse(existing.messageId(), recoveredKey, true));
@@ -111,9 +115,14 @@ public class MessageController {
      */
     @PostMapping("/reveal")
     public ResponseEntity<RevealResponse> reveal(@Valid @RequestBody RevealRequest body) {
+        // The client-supplied key unavoidably arrives as a String in the request
+        // body; decode it once here and pass only bytes to the service layer.
+        // Undecodable Base64 becomes null, which the service counts as a failed
+        // attempt like any other wrong key.
+        byte[] keyBytes = decodeKeyOrNull(body.aesKey());
         try {
             String plaintext = secretMessageService.getEncryptedMessageById(
-                    body.messageId(), body.aesKey());
+                    body.messageId(), keyBytes);
             return ResponseEntity.ok()
                     .header("Cache-Control", "no-store")
                     .body(new RevealResponse(plaintext));
@@ -122,6 +131,18 @@ public class MessageController {
         } catch (Exception e) {
             // Crypto exceptions (wrong key) -> same uniform 404
             throw new MessageNotAvailableException(MessageNotAvailableException.Reason.WRONG_KEY);
+        } finally {
+            if (keyBytes != null) {
+                Arrays.fill(keyBytes, (byte) 0);
+            }
+        }
+    }
+
+    private static byte[] decodeKeyOrNull(String aesKeyBase64) {
+        try {
+            return Base64.getDecoder().decode(aesKeyBase64);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

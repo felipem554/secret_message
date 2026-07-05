@@ -18,49 +18,49 @@ class CryptoUtilTest {
 
     @Test
     void encrypt_decrypt_bytes_roundTrip() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
+        byte[] key = crypto.generateRandomAESKeyBytes();
         byte[] plaintext = "Hello, World!".getBytes(StandardCharsets.UTF_8);
 
-        byte[] ciphertext = crypto.encrypt(plaintext, key.getEncoded());
-        byte[] recovered  = crypto.decrypt(ciphertext, key.getEncoded());
+        byte[] ciphertext = crypto.encrypt(plaintext, key);
+        byte[] recovered  = crypto.decrypt(ciphertext, key);
 
         assertArrayEquals(plaintext, recovered);
     }
 
     @Test
     void encrypt_sameInputTwice_producesDistinctCiphertexts() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
+        byte[] key = crypto.generateRandomAESKeyBytes();
         byte[] plaintext = "same content".getBytes(StandardCharsets.UTF_8);
 
-        byte[] c1 = crypto.encrypt(plaintext, key.getEncoded());
-        byte[] c2 = crypto.encrypt(plaintext, key.getEncoded());
+        byte[] c1 = crypto.encrypt(plaintext, key);
+        byte[] c2 = crypto.encrypt(plaintext, key);
 
         assertFalse(Arrays.equals(c1, c2), "Random IV must produce different ciphertexts each call");
     }
 
     @Test
     void decrypt_wrongKey_throwsBadPaddingException() throws Exception {
-        SecretKey k1 = crypto.generateRandomAESKey();
-        SecretKey k2 = crypto.generateRandomAESKey();
-        byte[] ciphertext = crypto.encrypt("data".getBytes(StandardCharsets.UTF_8), k1.getEncoded());
+        byte[] k1 = crypto.generateRandomAESKeyBytes();
+        byte[] k2 = crypto.generateRandomAESKeyBytes();
+        byte[] ciphertext = crypto.encrypt("data".getBytes(StandardCharsets.UTF_8), k1);
 
-        assertThrows(BadPaddingException.class, () -> crypto.decrypt(ciphertext, k2.getEncoded()));
+        assertThrows(BadPaddingException.class, () -> crypto.decrypt(ciphertext, k2));
     }
 
     @Test
     void decrypt_tamperedCiphertext_throwsException() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
-        byte[] ciphertext = crypto.encrypt("tamper test".getBytes(StandardCharsets.UTF_8), key.getEncoded());
+        byte[] key = crypto.generateRandomAESKeyBytes();
+        byte[] ciphertext = crypto.encrypt("tamper test".getBytes(StandardCharsets.UTF_8), key);
         ciphertext[20] ^= 0xFF;
 
-        assertThrows(BadPaddingException.class, () -> crypto.decrypt(ciphertext, key.getEncoded()));
+        assertThrows(BadPaddingException.class, () -> crypto.decrypt(ciphertext, key));
     }
 
     // ─── String encryptMessage/decryptMessage ─────────────────────────────────
 
     @Test
-    void encryptMessage_decryptMessage_secretKey_roundTrip() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
+    void encryptMessage_decryptMessage_roundTrip() throws Exception {
+        byte[] key = crypto.generateRandomAESKeyBytes();
         String original = "Super secret 🔐 UTF-8 Ação";
 
         String encrypted = crypto.encryptMessage(original, key);
@@ -70,20 +70,22 @@ class CryptoUtilTest {
     }
 
     @Test
-    void encryptMessage_decryptMessage_base64StringKey_roundTrip() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
-        String aesKeyBase64 = Base64.getEncoder().encodeToString(key.getEncoded());
+    void encryptMessage_decryptMessage_survivesBase64WireRoundTrip() throws Exception {
+        // Simulates the client flow: key travels as Base64 text and is
+        // decoded back to bytes at the transport boundary before decryption.
+        byte[] key = crypto.generateRandomAESKeyBytes();
+        String aesKeyBase64 = Base64.getEncoder().encodeToString(key);
         String original = "Base64 key round-trip — 日本語";
 
         String encrypted = crypto.encryptMessage(original, key);
-        String decrypted = crypto.decryptMessage(encrypted, aesKeyBase64);
+        String decrypted = crypto.decryptMessage(encrypted, Base64.getDecoder().decode(aesKeyBase64));
 
         assertEquals(original, decrypted);
     }
 
     @Test
     void encryptMessage_emptyString_roundTrip() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
+        byte[] key = crypto.generateRandomAESKeyBytes();
 
         String encrypted = crypto.encryptMessage("", key);
         String decrypted = crypto.decryptMessage(encrypted, key);
@@ -94,19 +96,18 @@ class CryptoUtilTest {
     // ─── Key generation ───────────────────────────────────────────────────────
 
     @Test
-    void generateRandomAESKey_is256Bits() throws Exception {
-        SecretKey key = crypto.generateRandomAESKey();
+    void generateRandomAESKeyBytes_is256Bits() {
+        byte[] key = crypto.generateRandomAESKeyBytes();
 
-        assertEquals("AES", key.getAlgorithm());
-        assertEquals(32, key.getEncoded().length, "AES-256 key must be 32 bytes");
+        assertEquals(32, key.length, "AES-256 key must be 32 bytes");
     }
 
     @Test
-    void generateRandomAESKey_eachCallUnique() throws Exception {
-        SecretKey k1 = crypto.generateRandomAESKey();
-        SecretKey k2 = crypto.generateRandomAESKey();
+    void generateRandomAESKeyBytes_eachCallUnique() {
+        byte[] k1 = crypto.generateRandomAESKeyBytes();
+        byte[] k2 = crypto.generateRandomAESKeyBytes();
 
-        assertFalse(Arrays.equals(k1.getEncoded(), k2.getEncoded()), "Keys must be random and unique");
+        assertFalse(Arrays.equals(k1, k2), "Keys must be random and unique");
     }
 
     // ─── PBKDF2 key derivation ─────────────────────────────────────────────────

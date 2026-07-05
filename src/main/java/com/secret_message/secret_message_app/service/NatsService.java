@@ -30,7 +30,7 @@ public class NatsService {
     private int maxMessageSize;
 
     private static final int MAX_MESSAGE_ID_LENGTH = 100;
-    private static final int MAX_AES_KEY_LENGTH = 500;
+    private static final int MAX_AES_KEY_BYTES = 64;
 
     @EventListener(ApplicationReadyEvent.class)
     public void startNatsSubscriptions() {
@@ -61,12 +61,19 @@ public class NatsService {
             }
 
             if (msg.getReplyTo() != null) {
+                SecretMessageIdentifier identifier = null;
                 try {
-                    SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(secretMessage);
+                    identifier = secretMessageService.createSecretMessage(secretMessage);
+                    // Jackson writes the byte[] key as Base64 (wire format unchanged);
+                    // this boundary owns the key bytes, so wipe them after publish.
                     natsConnection.publish(msg.getReplyTo(), mapper.writeValueAsBytes(identifier));
                 } catch (Exception e) {
                     log.error("Error creating secret message", e);
                     sendErrorResponse(msg.getReplyTo(), "Failed to create secret message: " + e.getMessage());
+                } finally {
+                    if (identifier != null) {
+                        identifier.wipe();
+                    }
                 }
             }
         } catch (Exception e) {
@@ -84,20 +91,27 @@ public class NatsService {
                 return;
             }
 
-            SecretMessageIdentifier messageIdentifier = mapper.readValue(msg.getData(), SecretMessageIdentifier.class);
+            SecretMessageIdentifier messageIdentifier;
+            try {
+                // Jackson decodes the Base64 "aeskey" JSON field into byte[].
+                messageIdentifier = mapper.readValue(msg.getData(), SecretMessageIdentifier.class);
+            } catch (Exception e) {
+                sendErrorResponse(msg.getReplyTo(), "Invalid message identifier format");
+                return;
+            }
             if (messageIdentifier == null) {
                 sendErrorResponse(msg.getReplyTo(), "Invalid message identifier format");
                 return;
             }
 
             String msgId = messageIdentifier.getMessageId();
-            String aesKey = messageIdentifier.getAeskey();
+            byte[] aesKey = messageIdentifier.getAeskey();
 
             if (msgId == null || msgId.trim().isEmpty() || msgId.length() > MAX_MESSAGE_ID_LENGTH) {
                 sendErrorResponse(msg.getReplyTo(), "Invalid message ID");
                 return;
             }
-            if (aesKey == null || aesKey.trim().isEmpty() || aesKey.length() > MAX_AES_KEY_LENGTH) {
+            if (aesKey == null || aesKey.length == 0 || aesKey.length > MAX_AES_KEY_BYTES) {
                 sendErrorResponse(msg.getReplyTo(), "Invalid AES key");
                 return;
             }
@@ -115,6 +129,8 @@ public class NatsService {
                 } catch (Exception e) {
                     log.error("Error retrieving secret message with ID: {}", msgId, e);
                     sendErrorResponse(msg.getReplyTo(), "Failed to retrieve secret message: " + e.getMessage());
+                } finally {
+                    messageIdentifier.wipe();
                 }
             }
         } catch (Exception e) {
