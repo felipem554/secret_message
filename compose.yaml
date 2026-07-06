@@ -69,7 +69,9 @@ services:
   nats:
     image: "nats:latest"
     ports:
-      - "4222:4222"
+      # Host port 4223 avoids colliding with a locally installed nats-server
+      # on 4222; containers still reach this NATS at nats:4222 internally.
+      - "4223:4222"
       - "8222:8222"
     networks:
       - nats
