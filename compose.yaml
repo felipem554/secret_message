@@ -23,6 +23,23 @@ services:
       NATS_PASS: ${NATS_PASS:-natspassword}
       IDEMPOTENCY_MASTER_KEY: ${IDEMPOTENCY_MASTER_KEY:-ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=}
       DEBUG: ${DEBUG:-false}
+      APP_ENV: ${APP_ENV:-development}
+      # Memory hardening defaults (docs/MEMORY_HARDENING.md): no dynamic
+      # attach (jmap/jcmd/agents), no remote JMX, die instead of writing a
+      # heap dump on OOM. Override JAVA_OPTS to relax locally.
+      JAVA_OPTS: ${JAVA_OPTS:--XX:+DisableAttachMechanism -XX:+ExitOnOutOfMemoryError -XX:-HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote=false}
+    # Memory hardening: no core dumps, no swap beyond the memory limit,
+    # no capabilities, no privilege escalation (blocks ptrace paths).
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    mem_limit: 512m
+    memswap_limit: 512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 #  test:
 #    build:

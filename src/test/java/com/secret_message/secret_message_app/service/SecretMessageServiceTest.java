@@ -68,7 +68,7 @@ class SecretMessageServiceTest {
 
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(secretMessage);
         assertNotNull(identifier.getMessageId());
-        assertNotNull(identifier.getSecretKey());
+        assertNotNull(identifier.getAeskey());
         assertNotNull(redisCacheManager.getEncryptedMessageById(identifier.getMessageId()),
                 "Encrypted message should be stored in Redis");
     }
@@ -124,7 +124,7 @@ class SecretMessageServiceTest {
     @Test
     void getSecretMessageWithWrongKeyTest() throws Exception {
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("wrong key test");
-        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+        byte[] wrongKey = java.util.Base64.getDecoder().decode("dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==");
 
         assertThrows(Exception.class,
                 () -> secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey),
@@ -134,7 +134,7 @@ class SecretMessageServiceTest {
     @Test
     void maxAttemptsTest() throws Exception {
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("max attempts test");
-        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+        byte[] wrongKey = java.util.Base64.getDecoder().decode("dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==");
 
         for (int i = 0; i < 2; i++) {
             MessageNotAvailableException ex = assertThrows(
@@ -156,7 +156,7 @@ class SecretMessageServiceTest {
     @Test
     void correctKeyAfterTwoWrongAttemptsStillReveals() throws Exception {
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("correct key still works");
-        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+        byte[] wrongKey = java.util.Base64.getDecoder().decode("dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==");
 
         for (int i = 0; i < 2; i++) {
             assertThrows(MessageNotAvailableException.class,
@@ -175,7 +175,7 @@ class SecretMessageServiceTest {
     void attemptCounterTtlTest() throws Exception {
         // Verifies attempts:* key has TTL and does not accumulate forever
         SecretMessageIdentifier identifier = secretMessageService.createSecretMessage("ttl test");
-        String wrongKey = "dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==";
+        byte[] wrongKey = java.util.Base64.getDecoder().decode("dGhpc2lzYXdyb25na2V5MTIzNDU2Nzg5MDEyMzQ1Ng==");
 
         try {
             secretMessageService.getEncryptedMessageById(identifier.getMessageId(), wrongKey);

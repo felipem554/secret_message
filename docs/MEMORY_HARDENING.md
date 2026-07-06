@@ -69,28 +69,50 @@ We do not defend against:
 The realistic goal is to raise the cost from "trivial accidental leak" to
 "requires serious system access."
 
+## Implementation Status
+
+Milestones 1–4 are implemented; milestone 5 is partially implemented (heap
+scan script and runtime checks exist; the CI logging guard is still open).
+
 ## Current Key Lifecycle
 
-The current create flow is:
+The implemented create flow is:
 
-1. `SecretMessageService.createSecretMessage(...)` generates a `SecretKey`.
-2. `CryptoUtil.encryptMessage(...)` calls `secretKey.getEncoded()`.
-3. `SecretMessageIdentifier` stores the key as Base64 text in `aeskey`.
-4. `MessageController` copies that value into `CreateMessageResponse`.
-5. Jackson serializes the response to JSON.
-6. If idempotency is enabled, `IdempotencyService.store(...)` decodes the
-   Base64 string back into bytes and encrypts it with the MIEK.
+1. `SecretMessageService.createSecretMessage(...)` draws 32 random key bytes
+   via `CryptoUtil.generateRandomAESKeyBytes()` (no `SecretKey` object, no
+   unwipeable `KeyGenerator` copy).
+2. `CryptoUtil.encryptMessage(content, keyBytes)` operates on `byte[]` only.
+3. `SecretMessageIdentifier.aeskey` holds the key as `byte[]`; Jackson maps
+   it to/from a Base64 JSON string at the NATS boundary, so the wire format
+   is unchanged.
+4. `IdempotencyService.store(...)` accepts `byte[]` and encrypts it with the
+   MIEK without making a plaintext copy; `recoverAesKey(...)` returns a fresh
+   `byte[]` the response boundary owns.
+5. `CreateMessageResponse.aesKey` is `byte[]`, serialized by
+   `WipingBase64Serializer`, which writes Base64 directly to the JSON
+   generator and zeroes the source buffer immediately after writing —
+   response serialization is the last owner of the key.
+6. On reveal, the client-supplied Base64 key is decoded once at the transport
+   boundary (`MessageController.reveal` / `NatsService`), passed down as
+   `byte[]`, and wiped in `finally`. Undecodable input becomes `null` and
+   counts as a failed attempt.
 
-Current gaps:
+### Documented framework-owned copies
 
-- `SecretMessageIdentifier.aeskey` is a `String`.
-- `CreateMessageResponse.aesKey` is a `String`.
-- `CryptoUtil.decryptMessage(String encryptedContent, String aesKey)` accepts a
-  key as `String`.
-- `IdempotencyService.store(...)` accepts `aesKeyBase64` as `String`.
-- `docker-entrypoint.sh` does not currently pass production hardening JVM flags.
-- Debug mode can enable JDWP when `DEBUG=true`; this must be explicitly blocked
-  in production.
+These copies exist outside application control and are accepted (verified by
+heap-dump inspection, see `scripts/heap-scan.sh`):
+
+- **Tomcat pooled connection buffers** hold the raw bytes of one HTTP
+  exchange (the create response and the reveal request both contain the key)
+  until the pooled processor is reused by later traffic. On a quiet server
+  the most recent exchange can persist in these buffers indefinitely.
+- **Jackson output/parser buffers** are recycled per worker thread and hold
+  the Base64 text for one exchange for the same reason.
+- The reveal-side copy is post-destruction residue: by the time the key sits
+  in a reveal request buffer, the message has already been deleted.
+- The JCE `SecretKeySpec` created inside `CryptoUtil.encrypt`/`decrypt` holds
+  an internal copy that cannot be wiped; it is short-lived garbage and does
+  not survive a live-objects heap dump after GC.
 
 ## Application Hardening Tasks
 
@@ -340,11 +362,15 @@ Acceptance criteria:
 Some checks require privileged local or staging access and should run
 periodically rather than on every PR.
 
-1. **Heap dump scan**
-   - Create a known-marker message/key in a controlled environment.
-   - Take a heap dump after the response is flushed.
-   - Search for the marker.
-   - Fail the check if the marker appears in a long-lived object path.
+1. **Heap dump scan** — implemented as `scripts/heap-scan.sh`
+   - Create a message against a locally running, attachable instance
+     (started without `-XX:+DisableAttachMechanism`).
+   - Reveal it, then flood both endpoints with padding traffic so pooled
+     connection buffers are overwritten (padding bodies must be longer than
+     any key-bearing exchange).
+   - Force GC and take a live-objects-only dump (`jcmd GC.heap_dump`).
+   - Search the dump for the returned key both as Base64 text and as raw
+     bytes; any hit is a reachable leak and fails the check.
 
 2. **Logging leak test**
    - Run integration tests with verbose logging.

@@ -81,7 +81,7 @@ class MessageApiIntegrationTest {
         MvcResult revealResult = mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest(created.messageId(), created.aesKey()))))
+                                new RevealRequest(created.messageId(), b64(created.aesKey())))))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andReturn();
@@ -94,7 +94,7 @@ class MessageApiIntegrationTest {
         mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest(created.messageId(), created.aesKey()))))
+                                new RevealRequest(created.messageId(), b64(created.aesKey())))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("message not available"));
     }
@@ -115,7 +115,7 @@ class MessageApiIntegrationTest {
         MvcResult revealResult = mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest(created.messageId(), created.aesKey()))))
+                                new RevealRequest(created.messageId(), b64(created.aesKey())))))
                 .andExpect(status().isOk())
                 .andReturn();
 
@@ -158,7 +158,7 @@ class MessageApiIntegrationTest {
 
         assertEquals(firstResponse.messageId(), secondResponse.messageId(),
                 "Retry must return the same messageId");
-        assertEquals(firstResponse.aesKey(), secondResponse.aesKey(),
+        assertArrayEquals(firstResponse.aesKey(), secondResponse.aesKey(),
                 "Retry must return the original AES key (recovered from MIEK-encrypted storage)");
     }
 
@@ -207,7 +207,7 @@ class MessageApiIntegrationTest {
         MvcResult notFoundResult = mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest("00000000-0000-0000-0000-000000000000", created.aesKey()))))
+                                new RevealRequest("00000000-0000-0000-0000-000000000000", b64(created.aesKey())))))
                 .andExpect(status().isNotFound())
                 .andReturn();
 
@@ -242,7 +242,7 @@ class MessageApiIntegrationTest {
         mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest(created.messageId(), created.aesKey()))))
+                                new RevealRequest(created.messageId(), b64(created.aesKey())))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("message not available"));
     }
@@ -271,7 +271,7 @@ class MessageApiIntegrationTest {
         mockMvc.perform(post("/api/v1/messages/reveal")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RevealRequest(created.messageId(), created.aesKey()))))
+                                new RevealRequest(created.messageId(), b64(created.aesKey())))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("survives two wrong attempts"));
     }
@@ -377,7 +377,7 @@ class MessageApiIntegrationTest {
         CreateMessageResponse created = objectMapper.readValue(
                 createResult.getResponse().getContentAsString(), CreateMessageResponse.class);
         String revealBody = objectMapper.writeValueAsString(
-                new RevealRequest(created.messageId(), created.aesKey()));
+                new RevealRequest(created.messageId(), b64(created.aesKey())));
 
         int threads = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -410,5 +410,11 @@ class MessageApiIntegrationTest {
         long notFounds = statuses.stream().filter(s -> s == 404).count();
         assertEquals(1, successes, "Exactly one reveal must succeed");
         assertEquals(threads - 1, notFounds, "All other reveals must return 404");
+    }
+
+    // CreateMessageResponse now carries the key as byte[]; the HTTP wire form
+    // is still a Base64 string, which RevealRequest expects.
+    private static String b64(byte[] key) {
+        return java.util.Base64.getEncoder().encodeToString(key);
     }
 }

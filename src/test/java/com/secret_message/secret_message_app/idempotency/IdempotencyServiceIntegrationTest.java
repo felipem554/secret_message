@@ -11,8 +11,6 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import javax.crypto.SecretKey;
-import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -52,9 +50,9 @@ class IdempotencyServiceIntegrationTest {
         String body = "{\"message\":\"hello\"}";
         String bodyHash = idempotencyService.hashBody(body);
         String messageId = UUID.randomUUID().toString();
-        String aesKeyBase64 = freshAesKeyBase64();
+        byte[] aesKeyBytes = cryptoUtil.generateRandomAESKeyBytes();
 
-        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, aesKeyBase64));
+        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, aesKeyBytes));
         Optional<IdempotencyRecord> found = idempotencyService.findExisting(iKey, bodyHash);
 
         assertTrue(found.isPresent(), "Record should be found after store");
@@ -76,7 +74,7 @@ class IdempotencyServiceIntegrationTest {
         String originalBody = "{\"message\":\"first\"}";
         String originalHash = idempotencyService.hashBody(originalBody);
 
-        assertTrue(idempotencyService.store(iKey, originalHash, UUID.randomUUID().toString(), freshAesKeyBase64()));
+        assertTrue(idempotencyService.store(iKey, originalHash, UUID.randomUUID().toString(), cryptoUtil.generateRandomAESKeyBytes()));
 
         String differentHash = idempotencyService.hashBody("{\"message\":\"different\"}");
         assertThrows(IdempotencyConflictException.class,
@@ -92,13 +90,13 @@ class IdempotencyServiceIntegrationTest {
         String body = "{\"message\":\"key recovery test\"}";
         String bodyHash = idempotencyService.hashBody(body);
         String messageId = UUID.randomUUID().toString();
-        String originalAesKeyBase64 = freshAesKeyBase64();
+        byte[] originalAesKeyBytes = cryptoUtil.generateRandomAESKeyBytes();
 
-        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, originalAesKeyBase64));
+        assertTrue(idempotencyService.store(iKey, bodyHash, messageId, originalAesKeyBytes));
         IdempotencyRecord record = idempotencyService.findExisting(iKey, bodyHash).orElseThrow();
-        String recovered = idempotencyService.recoverAesKey(record);
+        byte[] recovered = idempotencyService.recoverAesKey(record);
 
-        assertEquals(originalAesKeyBase64, recovered,
+        assertArrayEquals(originalAesKeyBytes, recovered,
                 "recoverAesKey must return the exact key that was stored");
     }
 
@@ -125,18 +123,12 @@ class IdempotencyServiceIntegrationTest {
         String firstMessageId  = UUID.randomUUID().toString();
         String secondMessageId = UUID.randomUUID().toString();
 
-        assertTrue(idempotencyService.store(iKey, bodyHash, firstMessageId, freshAesKeyBase64()));
-        assertFalse(idempotencyService.store(iKey, bodyHash, secondMessageId, freshAesKeyBase64()));
+        assertTrue(idempotencyService.store(iKey, bodyHash, firstMessageId, cryptoUtil.generateRandomAESKeyBytes()));
+        assertFalse(idempotencyService.store(iKey, bodyHash, secondMessageId, cryptoUtil.generateRandomAESKeyBytes()));
 
         IdempotencyRecord found = idempotencyService.findExisting(iKey, bodyHash).orElseThrow();
         assertEquals(firstMessageId, found.messageId(),
                 "Second store must not overwrite the first record (setIfAbsent semantics)");
     }
 
-    // ─── Helper ───────────────────────────────────────────────────────────────
-
-    private String freshAesKeyBase64() throws Exception {
-        SecretKey key = cryptoUtil.generateRandomAESKey();
-        return Base64.getEncoder().encodeToString(key.getEncoded());
-    }
 }

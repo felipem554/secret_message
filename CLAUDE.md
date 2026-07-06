@@ -83,8 +83,9 @@ Internal client → NATS receive.msg ({messageId, aeskey})
 | `NatsService` | `service` | NATS subject subscribers (internal) |
 | `SecretMessageService` | `service` | Business logic: encrypt, decrypt, attempt-counter, atomic-delete |
 | `RedisCacheManager` | `cache` | Redis primitives including `deleteIfPresent` (race-safe) |
-| `CryptoUtil` | `utils` | AES-256-CBC; byte[] and String variants |
+| `CryptoUtil` | `utils` | AES-256-CBC; byte[]-only key API (memory hardening) |
 | `IdempotencyKeyVault` | `idempotency` | Holds MIEK; encrypt/decrypt per-message AES keys for idempotency storage |
+| `WipingBase64Serializer` | `utils` | Writes byte[] keys as Base64 JSON, zeroes the buffer after writing |
 | `IdempotencyService` | `idempotency` | Redis read/write of idempotency records |
 | `ClientIpFilter` | `filter` | Resolves trusted client IP from X-Forwarded-For |
 | `RateLimitFilter` | `filter` | Bucket4j 100/day/IP rate limiting |
@@ -110,6 +111,7 @@ Internal client → NATS receive.msg ({messageId, aeskey})
 
 - Each message gets a unique random AES-256 key and IV.
 - The service **never stores the per-message decryption key in plaintext**.
+- Key material flows internally as `byte[]` only (never `String`/`SecretKey`) and is zeroed at the transport boundary after the response is written; see `docs/MEMORY_HARDENING.md` and `scripts/heap-scan.sh`.
 - Idempotency records store the AES key encrypted under a server-held master key (`IDEMPOTENCY_MASTER_KEY`).
 - Message self-destructs on first successful reveal (atomic GET+DEL).
 - Three failed decryption attempts trigger deletion (global counter, not per-IP).
@@ -138,6 +140,8 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `app.max-tries` | `3` | Max failed decryption attempts |
 | `app.max-message-size` | `1048576` | Max message size in bytes (1 MB) |
 | `app.rate-limit.requests-per-day` | `100` | HTTP API rate limit per client IP |
+| `JAVA_OPTS` | attach/JMX/heap-dump hardening flags | Extra JVM flags passed by `docker-entrypoint.sh` |
+| `APP_ENV` | `development` | Startup fails fast when `DEBUG=true` and `APP_ENV=production` |
 
 ## Ports
 

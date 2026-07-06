@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
@@ -70,21 +69,16 @@ public class IdempotencyService {
     }
 
     /**
-     * Stores a new record. The aesKeyBase64 is decoded, encrypted with MIEK,
-     * and stored as Base64-encoded ciphertext. The plaintext AES key buffer
-     * is zeroed before this method returns.
+     * Stores a new record. The plaintext key bytes are encrypted with MIEK
+     * and stored as Base64-encoded ciphertext. The caller retains ownership
+     * of {@code aesKeyBytes} (it is still needed for the HTTP response) and
+     * is responsible for wiping it; this method makes no plaintext copy.
      *
      * @return true when this call created the idempotency record; false when
      *         another request already created it.
      */
-    public boolean store(String idempotencyKey, String bodyHash, String messageId, String aesKeyBase64) {
-        byte[] aesKeyBytes = Base64.getDecoder().decode(aesKeyBase64);
-        byte[] encrypted;
-        try {
-            encrypted = vault.encrypt(aesKeyBytes);
-        } finally {
-            Arrays.fill(aesKeyBytes, (byte) 0);
-        }
+    public boolean store(String idempotencyKey, String bodyHash, String messageId, byte[] aesKeyBytes) {
+        byte[] encrypted = vault.encrypt(aesKeyBytes);
 
         IdempotencyRecord record = new IdempotencyRecord(
                 bodyHash,
@@ -109,17 +103,13 @@ public class IdempotencyService {
     }
 
     /**
-     * Decrypts the AES key from a stored record and returns it as Base64.
-     * Used on idempotent retry to return the original key to the client.
+     * Decrypts the AES key from a stored record. Used on idempotent retry to
+     * return the original key to the client. Returns a fresh buffer that the
+     * caller owns and must wipe (in practice the response serializer does).
      */
-    public String recoverAesKey(IdempotencyRecord record) {
+    public byte[] recoverAesKey(IdempotencyRecord record) {
         byte[] ciphertext = Base64.getDecoder().decode(record.encryptedAesKey());
-        byte[] decrypted = vault.decrypt(ciphertext);
-        try {
-            return Base64.getEncoder().encodeToString(decrypted);
-        } finally {
-            Arrays.fill(decrypted, (byte) 0);
-        }
+        return vault.decrypt(ciphertext);
     }
 
     private IdempotencyRecord parse(String json) {
