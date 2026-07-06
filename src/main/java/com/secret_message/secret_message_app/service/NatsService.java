@@ -38,9 +38,14 @@ public class NatsService {
         createDispatcher(natsConnection, "receive.msg", this::getSecretMessageSubscriber);
     }
 
+    // With multiple app replicas, a plain subscription would broadcast every
+    // request to all instances (duplicate messages, racing replies). A queue
+    // group makes NATS deliver each message to exactly one member.
+    static final String QUEUE_GROUP = "secret-message-workers";
+
     public void createDispatcher(Connection natsConnection, String subject, MessageHandler messageHandler) {
         Dispatcher dispatcher = natsConnection.createDispatcher(messageHandler);
-        dispatcher.subscribe(subject);
+        dispatcher.subscribe(subject, QUEUE_GROUP);
     }
 
     public void createSecretMessageSubscriber(Message msg) {
