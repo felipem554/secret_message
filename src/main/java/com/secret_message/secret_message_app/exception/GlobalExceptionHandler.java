@@ -10,6 +10,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 @RequiredArgsConstructor
@@ -72,6 +73,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .header("Cache-Control", CACHE_NO_STORE)
                 .body(new ErrorResponse("invalid request body"));
+    }
+
+    /**
+     * Requests to paths with no handler must be a plain 404. Without this,
+     * NoResourceFoundException falls into the generic handler and every
+     * unknown path answers 503 — which reads as "service down" to monitors.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResource() {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .header("Cache-Control", CACHE_NO_STORE)
+                .body(new ErrorResponse("not found"));
     }
 
     @ExceptionHandler(Exception.class)

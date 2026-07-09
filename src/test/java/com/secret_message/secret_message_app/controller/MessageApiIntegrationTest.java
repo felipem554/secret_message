@@ -312,6 +312,14 @@ class MessageApiIntegrationTest {
                 .andExpect(jsonPath("$.status").value("UP"));
     }
 
+    @Test
+    void unknownPath_returns404_not503() throws Exception {
+        // NoResourceFoundException must not fall into the generic 503 handler
+        mockMvc.perform(get("/no/such/path"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not found"));
+    }
+
     // ─── Payload size guard ───────────────────────────────────────────────────
 
     @Test
