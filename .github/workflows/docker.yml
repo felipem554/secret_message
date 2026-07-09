@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Secret-logging guard (docs/MEMORY_HARDENING.md task 4)
+        run: ./scripts/check-secret-logging.sh
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
