@@ -31,3 +31,6 @@ build/
 hs_err_pid*
 replay_pid*
 .env
+
+# Testcontainers artifact directory dropped at repo root during test runs
+org/
