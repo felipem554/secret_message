@@ -1,18 +1,19 @@
+# Runs the prebuilt public image from GHCR — no local build, no JDK needed.
+#
+#   docker compose -f compose.ghcr.yaml up -d
+#   curl http://localhost:8080/actuator/health
+#
+# `latest` tracks the main branch. For a reproducible run, pin an immutable
+# tag instead: ghcr.io/felipem554/secret_message:sha-<commit>.
+# Local development builds use compose.yaml.
 
 services:
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: final
-    # Local builds get the canonical image name, so `docker compose build`
-    # and the CI-published GHCR image are interchangeable under one tag.
-    # To run the published image without building, use compose.ghcr.yaml.
     image: ghcr.io/felipem554/secret_message:latest
+    pull_policy: always
     ports:
       - "8080:8080"
-      # Add "5005:5005" locally and set DEBUG=true to enable remote debugging.
     networks:
       - nats
     depends_on:
@@ -28,12 +29,7 @@ services:
       IDEMPOTENCY_MASTER_KEY: ${IDEMPOTENCY_MASTER_KEY:-ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=}
       DEBUG: ${DEBUG:-false}
       APP_ENV: ${APP_ENV:-development}
-      # Memory hardening defaults (docs/MEMORY_HARDENING.md): no dynamic
-      # attach (jmap/jcmd/agents), no remote JMX, die instead of writing a
-      # heap dump on OOM. Override JAVA_OPTS to relax locally.
       JAVA_OPTS: ${JAVA_OPTS:--XX:+DisableAttachMechanism -XX:+ExitOnOutOfMemoryError -XX:-HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote=false}
-    # Memory hardening: no core dumps, no swap beyond the memory limit,
-    # no capabilities, no privilege escalation (blocks ptrace paths).
     ulimits:
       core:
         soft: 0
@@ -47,27 +43,18 @@ services:
 
   redis:
     image: redis:latest
-    ports:
-      - "6379:6379"
     networks:
       - nats
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
     command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword}
 
   nats:
     image: "nats:latest"
     ports:
-      # Host port 4223 avoids colliding with a locally installed nats-server
-      # on 4222; containers still reach this NATS at nats:4222 internally.
+      # Host port 4223 avoids colliding with a locally installed nats-server.
       - "4223:4222"
-      - "8222:8222"
     networks:
       - nats
-    environment:
-      NATS_USER: ${NATS_USER:-natsuser}
-      NATS_PASS: ${NATS_PASS:-natspassword}
-    command: ["-DV", "--http_port", "8222", "--trace", "--user", "${NATS_USER:-natsuser}", "--pass", "${NATS_PASS:-natspassword}"]
+    command: ["--user", "${NATS_USER:-natsuser}", "--pass", "${NATS_PASS:-natspassword}"]
 
   nats-box:
     image: synadia/nats-box
@@ -75,7 +62,7 @@ services:
       - nats
     networks:
       - nats
-    tty: true # Keep the container running
+    tty: true
 
 networks:
   nats:
