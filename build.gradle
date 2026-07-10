@@ -31,8 +31,8 @@ dependencies {
 	implementation 'org.apache.commons:commons-pool2:2.11.1'
 
 	// Rate limiting — Bucket4j with Redis (Jedis) backend
-	implementation 'com.bucket4j:bucket4j_jdk17-core:8.14.0'
-	implementation 'com.bucket4j:bucket4j_jdk17-jedis:8.14.0'
+	implementation 'com.bucket4j:bucket4j_jdk17-core:8.19.0'
+	implementation 'com.bucket4j:bucket4j_jdk17-jedis:8.19.0'
 
 	// Bean validation for HTTP request bodies
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
