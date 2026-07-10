@@ -1,8 +1,16 @@
 # Self-Destructing Secret Message Service
 
+[![docker](https://github.com/felipem554/secret_message/actions/workflows/docker.yml/badge.svg)](https://github.com/felipem554/secret_message/actions/workflows/docker.yml)
+[![codeql](https://github.com/felipem554/secret_message/actions/workflows/codeql.yml/badge.svg)](https://github.com/felipem554/secret_message/actions/workflows/codeql.yml)
+![java](https://img.shields.io/badge/Java-21-blue)
+![spring boot](https://img.shields.io/badge/Spring%20Boot-3-brightgreen)
+[![image](https://img.shields.io/badge/GHCR-secret__message-blue?logo=docker)](https://github.com/felipem554/secret_message/pkgs/container/secret_message)
+
 A secure service for sharing encrypted messages that self-destruct after being read. Built with Spring Boot, Redis, and NATS.
 
 Messages are encrypted with AES-256 before storage. The server never persists the decryption key — only the client holds it. A message deletes itself on first successful read, or after three failed decryption attempts, or after a server-configured TTL (default 2 days).
+
+**What's technically interesting here:** per-message AES keys live in JVM memory as `byte[]` only and are zeroed at the serialization boundary — verified by a [heap-dump scan](docs/MEMORY_HARDENING.md) that dumps the live heap and proves the key is unrecoverable (the process found a real key remnant in a pooled Tomcat buffer and drove the fix). Reveal-once semantics are race-safe under concurrency via atomic Redis operations, proven by a multi-threaded integration test. Every failure mode returns an identical `404`, so an attacker cannot distinguish "wrong key" from "no such message".
 
 ## Table of Contents
 
@@ -33,6 +41,21 @@ Both transports call `SecretMessageService`, which performs AES-256 encryption/d
 | Storage | Redis | Encrypted payloads + counters + idempotency records, all TTL-bound |
 
 **NATS is an internal transport only.** Public clients use the HTTP API; backend services and scripts can still publish to `save.msg` / `receive.msg` directly.
+
+```mermaid
+flowchart LR
+    C[Public client] -->|HTTPS| P[Reverse proxy\nTLS termination]
+    P --> F1[ClientIpFilter]
+    F1 --> F2[RateLimitFilter\n100/day/IP]
+    F2 --> MC[MessageController]
+    B[Backend script] -->|save.msg / receive.msg| N[NATS]
+    N --> NS[NatsService\nqueue group]
+    MC --> I[IdempotencyService]
+    MC --> S[SecretMessageService\nAES-256 encrypt/decrypt]
+    NS --> S
+    I --> R[(Redis\nmessages / attempts /\nidempotency / ratelimit\nall TTL-bound)]
+    S --> R
+```
 
 ### Request flow — HTTP
 
@@ -71,11 +94,21 @@ docker compose up -d
 docker compose logs -f app
 ```
 
+This builds the image from the local Dockerfile. To run the **prebuilt public
+image** from GHCR instead (no local build, no JDK needed):
+
+```bash
+docker compose -f compose.ghcr.yaml up -d
+```
+
+The published image is `ghcr.io/felipem554/secret_message` (`latest` tracks
+`main`; immutable `sha-<commit>` tags are also pushed by CI).
+
 ### 3. Smoke test
 
 ```bash
 # Health check
-curl http://localhost:8080/status
+curl http://localhost:8080/actuator/health
 
 # Create a secret
 curl -s -X POST http://localhost:8080/api/v1/messages \
@@ -183,9 +216,19 @@ These subjects remain available for backend / scripted access. They are not rate
 | `save.msg` | plaintext string (≤ 1 MB) | `{"messageId":"...", "aeskey":"..."}` |
 | `receive.msg` | `{"messageId":"...", "aeskey":"..."}` | plaintext string |
 
+The compose stack publishes NATS on **host port 4223** (4222 is left free for
+a locally installed nats-server). Credentials default to `natsuser` /
+`natspassword` unless overridden in `.env`.
+
 ```bash
-nats request save.msg "my internal secret" --server nats://localhost:4222
-nats request receive.msg '{"messageId":"...","aeskey":"..."}' --server nats://localhost:4222
+nats request save.msg "my internal secret" --server nats://natsuser:natspassword@localhost:4223
+nats request receive.msg '{"messageId":"...","aeskey":"..."}' --server nats://natsuser:natspassword@localhost:4223
+```
+
+Or from inside the compose network via the bundled nats-box container:
+
+```bash
+docker compose exec nats-box nats -s nats://natsuser:natspassword@nats:4222 request save.msg "my internal secret"
 ```
 
 ## Configuration
@@ -259,11 +302,17 @@ openssl rand -base64 32
 
 **Rate limit exceeded in dev**
 
-The rate limit key is `ratelimit:<ip>`. Flush it in Redis:
+The rate limit key is `ratelimit:<client-ip>`. When calling through the
+compose port mapping, the client IP the app sees is the Docker bridge
+gateway (e.g. `172.18.0.1`), not `127.0.0.1` — and Redis requires
+authentication. List the actual keys, then delete them:
 
 ```bash
-docker compose exec redis redis-cli DEL "ratelimit:127.0.0.1"
+docker compose exec redis redis-cli -a redispassword --no-auth-warning --scan --pattern "ratelimit:*"
+docker compose exec redis redis-cli -a redispassword --no-auth-warning DEL "ratelimit:172.18.0.1"
 ```
+
+See `docs/RATE_LIMIT_RECOVERY.md` for the full explanation.
 
 **Message already retrieved / not found**
 

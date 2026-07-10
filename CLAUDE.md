@@ -20,7 +20,7 @@ docker compose down
 DEBUG=true docker compose up -d
 
 # Health check
-curl http://localhost:8080/status
+curl http://localhost:8080/actuator/health
 ```
 
 ## Tests
@@ -104,7 +104,6 @@ Internal client → NATS receive.msg ({messageId, aeskey})
 |--------|------|---------|
 | `POST` | `/api/v1/messages` | Create secret (optional `Idempotency-Key` header) |
 | `POST` | `/api/v1/messages/reveal` | Read once and delete |
-| `GET` | `/status` | Health string |
 | `GET` | `/actuator/health` | Spring Boot Actuator health |
 
 ### Security model
@@ -162,3 +161,4 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `docs/JVM_MEMORY_SECURITY_PRIMER.md` | Didactic JVM memory, GC, leak, and secret-handling primer |
 | `docs/STORAGE_NATS_VS_REDIS.md` | ADR-0001: why Redis was chosen over NATS JetStream as the message store |
 | `docs/RATE_LIMITING.md` | Rate limiting options and Bucket4j implementation notes |
+| `docs/RATE_LIMIT_RECOVERY.md` | Why the old rate-limit reset command failed and the correct procedure |
