@@ -3,6 +3,7 @@ package com.secret_message.secret_message_app.model;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.util.Arrays;
 
@@ -20,6 +21,9 @@ import java.util.Arrays;
 public class SecretMessageIdentifier {
 
     private String messageId;
+    // Lombok's generated toString() renders array contents; excluding the
+    // key keeps an accidental log.info("{}", identifier) from printing it.
+    @ToString.Exclude
     private byte[] aeskey;
 
     public void wipe() {
