@@ -160,5 +160,6 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `docs/MEMORY_HARDENING.md` | Operational JVM/OS key-material hardening plan and verification checklist |
 | `docs/JVM_MEMORY_SECURITY_PRIMER.md` | Didactic JVM memory, GC, leak, and secret-handling primer |
 | `docs/STORAGE_NATS_VS_REDIS.md` | ADR-0001: why Redis was chosen over NATS JetStream as the message store |
+| `docs/TRANSPORT_NATS_VS_KAFKA.md` | ADR-0002: why NATS was kept over Kafka as the internal transport |
 | `docs/RATE_LIMITING.md` | Rate limiting options and Bucket4j implementation notes |
 | `docs/RATE_LIMIT_RECOVERY.md` | Why the old rate-limit reset command failed and the correct procedure |

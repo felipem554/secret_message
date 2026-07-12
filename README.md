@@ -261,6 +261,7 @@ docker compose exec nats-box nats -s nats://natsuser:natspassword@nats:4222 requ
 See `docs/MEMORY_HARDENING.md` for the key-material hardening plan and `docs/JVM_MEMORY_SECURITY_PRIMER.md` for the JVM memory primer.
 See `docs/HTTP_API_DESIGN.md` for the full design rationale.
 See `docs/STORAGE_NATS_VS_REDIS.md` (ADR-0001) for the Redis vs NATS JetStream architecture decision.
+See `docs/TRANSPORT_NATS_VS_KAFKA.md` (ADR-0002) for why NATS was kept over Kafka as the internal transport.
 
 ## Development
 
