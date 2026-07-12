@@ -231,6 +231,19 @@ Or from inside the compose network via the bundled nats-box container:
 docker compose exec nats-box nats -s nats://natsuser:natspassword@nats:4222 request save.msg "my internal secret"
 ```
 
+> **Note — Kafka study implementation.** On the
+> `feature/kafka-transport-study` branch, NATS is being **replaced entirely**
+> by a Kafka-based internal transport, and the service is being split into
+> two apps (a save app and a receive app, each consuming its own request
+> topic) so Kafka can distribute the load in parallel. This is acknowledged
+> to be a **non-optimal** choice for this workload — ADR-0002
+> (`docs/TRANSPORT_NATS_VS_KAFKA.md`) evaluated and rejected Kafka because
+> its durable, replayable log conflicts with the service's nothing-at-rest
+> security model — and it is being implemented **for study purposes only**.
+> See `docs/KAFKA_INTERNAL_TRANSPORT_STUDY.md` for the plan and the security
+> layers (envelope encryption, TLS/SASL/ACLs, minimal retention) used to keep
+> the stream secure despite the mismatch.
+
 ## Configuration
 
 | Property / Env var | Default | Purpose |
@@ -262,6 +275,7 @@ See `docs/MEMORY_HARDENING.md` for the key-material hardening plan and `docs/JVM
 See `docs/HTTP_API_DESIGN.md` for the full design rationale.
 See `docs/STORAGE_NATS_VS_REDIS.md` (ADR-0001) for the Redis vs NATS JetStream architecture decision.
 See `docs/TRANSPORT_NATS_VS_KAFKA.md` (ADR-0002) for why NATS was kept over Kafka as the internal transport.
+See `docs/KAFKA_INTERNAL_TRANSPORT_STUDY.md` for the study-only Kafka transport plan (non-optimal by ADR-0002; educational).
 
 ## Development
 
