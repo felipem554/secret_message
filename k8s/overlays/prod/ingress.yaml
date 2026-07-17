@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: secret-message
+  labels:
+    app.kubernetes.io/name: secret-message
+    app.kubernetes.io/component: app
+  # TLS terminates here, matching the "HTTPS terminated at reverse proxy"
+  # model in the HTTP request flow. The app trusts X-Forwarded-For from
+  # RFC1918 sources (server.tomcat.remoteip.internal-proxies), which covers
+  # standard pod CIDRs — ClientIpFilter and rate limiting keep working.
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - secret-message.example.com
+      secretName: secret-message-tls
+  rules:
+    - host: secret-message.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secret-message
+                port:
+                  name: http

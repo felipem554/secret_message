@@ -21,6 +21,10 @@ DEBUG=true docker compose up -d
 
 # Health check
 curl http://localhost:8080/actuator/health
+
+# Deploy to Kubernetes (Kustomize manifests; see docs/KUBERNETES.md)
+cp k8s/overlays/dev/secrets.env.example k8s/overlays/dev/secrets.env  # then edit
+kubectl apply -k k8s/overlays/dev
 ```
 
 ## Tests
@@ -163,3 +167,4 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `docs/TRANSPORT_NATS_VS_KAFKA.md` | ADR-0002: why NATS was kept over Kafka as the internal transport |
 | `docs/RATE_LIMITING.md` | Rate limiting options and Bucket4j implementation notes |
 | `docs/RATE_LIMIT_RECOVERY.md` | Why the old rate-limit reset command failed and the correct procedure |
+| `docs/KUBERNETES.md` | Kubernetes deployment guide: Kustomize layout, ephemeral-Redis and NetworkPolicy rationale, why CloudNativePG doesn't apply |

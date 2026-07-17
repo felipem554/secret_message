@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: secret-message
+    app.kubernetes.io/component: redis
+spec:
+  # Single instance, no persistence — deliberate. All Redis data is
+  # TTL-bound ciphertext for self-destructing messages; writing it to a
+  # PersistentVolume would outlive the security model. A pod restart loses
+  # stored messages, which is acceptable here (see k8s/README.md).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secret-message
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secret-message
+        app.kubernetes.io/component: redis
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999 # redis user in the official image
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            # No RDB snapshots: don't write ciphertext to disk.
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: secret-message-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
