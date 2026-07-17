@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: secret-message
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - ingress.yaml
+
+# Copy secrets.env.example to secrets.env and fill in real values before
+# building. secrets.env is gitignored.
+secretGenerator:
+  - name: secret-message-secrets
+    envs:
+      - secrets.env
+
+# Pin the app image to a released version instead of tracking latest, e.g.:
+# images:
+#   - name: ghcr.io/felipem554/secret_message
+#     newTag: 0.2.0
+
+patches:
+  # Two replicas are safe: the NATS queue group load-balances subscribers
+  # and all shared state uses Redis atomic operations (ADR-0001).
+  - target:
+      kind: Deployment
+      name: secret-message
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: secret-message-config
+      data:
+        APP_ENV: production

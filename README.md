@@ -104,6 +104,18 @@ docker compose -f compose.ghcr.yaml up -d
 The published image is `ghcr.io/felipem554/secret_message` (`latest` tracks
 `main`; immutable `sha-<commit>` tags are also pushed by CI).
 
+To deploy on **Kubernetes** instead, use the Kustomize manifests in
+[`k8s/`](k8s/) (dev and prod overlays, default-deny NetworkPolicies,
+ephemeral Redis):
+
+```bash
+cp k8s/overlays/dev/secrets.env.example k8s/overlays/dev/secrets.env
+# edit secrets.env, then:
+kubectl apply -k k8s/overlays/dev
+```
+
+See `docs/KUBERNETES.md` for the full guide and design rationale.
+
 ### 3. Smoke test
 
 ```bash
@@ -262,6 +274,7 @@ See `docs/MEMORY_HARDENING.md` for the key-material hardening plan and `docs/JVM
 See `docs/HTTP_API_DESIGN.md` for the full design rationale.
 See `docs/STORAGE_NATS_VS_REDIS.md` (ADR-0001) for the Redis vs NATS JetStream architecture decision.
 See `docs/TRANSPORT_NATS_VS_KAFKA.md` (ADR-0002) for why NATS was kept over Kafka as the internal transport.
+See `docs/KUBERNETES.md` for the Kubernetes deployment guide (Kustomize manifests in `k8s/`).
 
 ## Development
 

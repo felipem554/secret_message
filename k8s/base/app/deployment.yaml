@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secret-message
+  labels:
+    app.kubernetes.io/name: secret-message
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secret-message
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secret-message
+        app.kubernetes.io/component: app
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # appuser in the Dockerfile
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # Prod deployments should pin a version tag via the `images:`
+          # transformer in the overlay instead of tracking latest.
+          image: ghcr.io/felipem554/secret_message:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: secret-message-config
+          env:
+            - name: SPRING_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: secret-message-secrets
+                  key: REDIS_PASSWORD
+            - name: NATS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: secret-message-secrets
+                  key: NATS_USER
+            - name: NATS_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: secret-message-secrets
+                  key: NATS_PASS
+            - name: IDEMPOTENCY_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-message-secrets
+                  key: IDEMPOTENCY_MASTER_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi # matches compose mem_limit
+          # Spring Boot auto-enables the liveness/readiness health groups when
+          # it detects Kubernetes (KUBERNETES_SERVICE_HOST).
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

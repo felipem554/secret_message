@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  labels:
+    app.kubernetes.io/name: secret-message
+    app.kubernetes.io/component: nats
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: secret-message
+    app.kubernetes.io/component: nats
+  ports:
+    # Client port only. The 8222 monitoring port is intentionally not
+    # exposed here — it is reachable only by kubelet probes.
+    - name: client
+      port: 4222
+      targetPort: client

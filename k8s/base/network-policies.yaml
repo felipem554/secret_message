@@ -1,0 +1,79 @@
+# Default-deny ingress for the whole namespace, then explicit allows.
+# This enforces in the cluster what ADR-0002 (docs/TRANSPORT_NATS_VS_KAFKA.md)
+# requires operationally: the internal NATS interface (plaintext + AES keys
+# in flight) must never be reachable from outside the trusted backend.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: secret-message
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: secret-message
+              app.kubernetes.io/component: app
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-nats
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: secret-message
+      app.kubernetes.io/component: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Only the app may talk to NATS. Internal backend clients that need
+        # save.msg/receive.msg must run in this namespace with an explicit
+        # allow added here — never expose NATS outside the cluster.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: secret-message
+              app.kubernetes.io/component: app
+      ports:
+        - protocol: TCP
+          port: 4222
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller-to-app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: secret-message
+      app.kubernetes.io/component: app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Adjust to your ingress controller's namespace. kubectl port-forward
+        # bypasses NetworkPolicy, so dev access works without an allow rule.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080

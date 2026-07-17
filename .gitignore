@@ -32,5 +32,8 @@ hs_err_pid*
 replay_pid*
 .env
 
+# Kubernetes secret material (use the committed secrets.env.example templates)
+k8s/overlays/*/secrets.env
+
 # Testcontainers artifact directory dropped at repo root during test runs
 org/
