@@ -28,7 +28,7 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok:1.18.34'
 
     implementation 'redis.clients:jedis:5.2.0'
-	implementation 'org.apache.commons:commons-pool2:2.11.1'
+	implementation 'org.apache.commons:commons-pool2:2.13.1'
 
 	// Rate limiting — Bucket4j with Redis (Jedis) backend
 	implementation 'com.bucket4j:bucket4j_jdk17-core:8.14.0'
