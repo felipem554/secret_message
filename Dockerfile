@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Use the Eclipse Temurin JDK for building the application
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:25-jdk-jammy AS build
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ WORKDIR /app
 RUN ./gradlew test
 
 # Use the Eclipse Temurin JRE for running the application
-FROM eclipse-temurin:21-jre-jammy AS final
+FROM eclipse-temurin:25-jre-jammy AS final
 
 # Create a non-privileged user that the app will run under
 ARG UID=10001
