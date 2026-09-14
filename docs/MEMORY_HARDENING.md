@@ -44,6 +44,11 @@ This plan protects two classes of key material.
    - Used to encrypt per-message AES keys stored in idempotency records.
    - Lives for the process lifetime.
    - Must never be logged, dumped, or copied into uncontrolled objects.
+   - Architecturally the same role as a "pepper" in the password-hashing sense (a
+     secret, application-wide value that must never be a shared/default in
+     production) — see `docs/PASSWORD_HASHING_SPEC.md` § Applicability. `IdempotencyKeyVault`
+     fails fast at startup if `app.env` (`APP_ENV`) is `production` and this key is still
+     the checked-in dev fallback; see `IdempotencyKeyVaultSpringWiringTest`.
 
 Message plaintext is also sensitive, but this plan focuses on key material
 because key leakage can expose encrypted messages beyond one request.
