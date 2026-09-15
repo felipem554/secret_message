@@ -3,6 +3,7 @@ package com.secret_message.secret_message_app.idempotency;
 import com.secret_message.secret_message_app.utils.CryptoUtil;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -32,11 +33,17 @@ public class IdempotencyKeyVault {
 
     private static final int REQUIRED_KEY_BYTES = 32;
 
+    // The value checked into application.properties/compose.yaml/compose.ghcr.yaml as the
+    // local-dev fallback for IDEMPOTENCY_MASTER_KEY. Never a real secret; safe to compare against.
+    private static final String DEV_FALLBACK_KEY_BASE64 = "ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=";
+
     private final byte[] masterKey;
     private final CryptoUtil cryptoUtil;
 
+    @Autowired
     public IdempotencyKeyVault(
             @Value("${app.idempotency.master-key}") String masterKeyBase64,
+            @Value("${app.env:development}") String appEnv,
             CryptoUtil cryptoUtil) {
 
         if (masterKeyBase64 == null || masterKeyBase64.isBlank()) {
@@ -45,9 +52,18 @@ public class IdempotencyKeyVault {
                             + "Generate one with: openssl rand -base64 32");
         }
 
+        String trimmedKey = masterKeyBase64.trim();
+
+        if ("production".equalsIgnoreCase(appEnv) && DEV_FALLBACK_KEY_BASE64.equals(trimmedKey)) {
+            throw new IllegalStateException(
+                    "app.idempotency.master-key is still the checked-in development fallback "
+                            + "value while app.env (env APP_ENV) is production. Generate a real "
+                            + "key with: openssl rand -base64 32");
+        }
+
         byte[] decoded;
         try {
-            decoded = Base64.getDecoder().decode(masterKeyBase64.trim());
+            decoded = Base64.getDecoder().decode(trimmedKey);
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException(
                     "app.idempotency.master-key is not valid Base64", e);
@@ -62,6 +78,11 @@ public class IdempotencyKeyVault {
         this.masterKey = decoded;
         this.cryptoUtil = cryptoUtil;
         log.info("IdempotencyKeyVault initialized with a {}-byte master key", REQUIRED_KEY_BYTES);
+    }
+
+    /** Test convenience overload — defaults app.env to a non-production value. */
+    IdempotencyKeyVault(String masterKeyBase64, CryptoUtil cryptoUtil) {
+        this(masterKeyBase64, "development", cryptoUtil);
     }
 
     public byte[] encrypt(byte[] plaintext) {
