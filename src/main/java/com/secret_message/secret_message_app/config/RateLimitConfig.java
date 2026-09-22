@@ -3,12 +3,12 @@ package com.secret_message.secret_message_app.config;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.distributed.proxy.ProxyManager;
-import io.github.bucket4j.redis.jedis.cas.JedisBasedProxyManager;
+import io.github.bucket4j.distributed.serialization.Mapper;
+import io.github.bucket4j.redis.jedis.Bucket4jJedis;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.JedisPoolConfig;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 
 import java.time.Duration;
 import java.util.function.Supplier;
@@ -16,21 +16,16 @@ import java.util.function.Supplier;
 @Configuration
 public class RateLimitConfig {
 
-    @Bean(destroyMethod = "close")
-    public JedisPool rateLimitJedisPool(
-            @Value("${spring.redis.host}") String host,
-            @Value("${spring.redis.port}") int port,
-            @Value("${spring.redis.password:#{null}}") String password) {
-
-        if (password != null && !password.isEmpty()) {
-            return new JedisPool(new JedisPoolConfig(), host, port, 2000, password);
-        }
-        return new JedisPool(new JedisPoolConfig(), host, port);
-    }
-
+    /**
+     * Bucket4j shares the application's single Redis connection pool
+     * (see {@link RedisConfig}) through {@link SpringDataRedisApi}. Using
+     * Bucket4j's {@code builderFor(JedisPool)} helper instead would open a
+     * second pool against the same Redis, sized independently of the first.
+     */
     @Bean
-    public ProxyManager<byte[]> rateLimitProxyManager(JedisPool rateLimitJedisPool) {
-        return JedisBasedProxyManager.builderFor(rateLimitJedisPool).build();
+    public ProxyManager<byte[]> rateLimitProxyManager(RedisConnectionFactory redisConnectionFactory) {
+        return new Bucket4jJedis.JedisBasedProxyManagerBuilder<>(
+                Mapper.BYTES, new SpringDataRedisApi(redisConnectionFactory)).build();
     }
 
     @Bean

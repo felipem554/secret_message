@@ -37,7 +37,7 @@ spec:
             - configMapRef:
                 name: secret-message-config
           env:
-            - name: SPRING_REDIS_PASSWORD
+            - name: SPRING_DATA_REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: secret-message-secrets

@@ -207,7 +207,7 @@ Configure app to use password:
 ```yaml
 app:
   environment:
-    SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-secure-password}
+    SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-secure-password}
 ```
 
 #### 2. NATS Authentication

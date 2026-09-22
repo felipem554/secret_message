@@ -28,8 +28,8 @@ class IdempotencyKeyVaultTest {
 
     @DynamicPropertySource
     static void containerProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.redis.host", redisContainer::getHost);
-        registry.add("spring.redis.port", () -> redisContainer.getMappedPort(6379));
+        registry.add("spring.data.redis.host", redisContainer::getHost);
+        registry.add("spring.data.redis.port", () -> redisContainer.getMappedPort(6379));
         registry.add("nats.server.url",
                 () -> "nats://" + natsContainer.getHost() + ":" + natsContainer.getMappedPort(4222));
     }
