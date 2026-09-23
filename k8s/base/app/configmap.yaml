@@ -8,8 +8,8 @@ metadata:
 data:
   APP_ENV: development
   DEBUG: "false"
-  SPRING_REDIS_HOST: redis
-  SPRING_REDIS_PORT: "6379"
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: "6379"
   NATS_URL: nats://nats:4222
   # Memory hardening defaults (docs/MEMORY_HARDENING.md): no dynamic attach
   # (jmap/jcmd/agents), no remote JMX, die instead of writing a heap dump on

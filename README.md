@@ -248,9 +248,9 @@ docker compose exec nats-box nats -s nats://natsuser:natspassword@nats:4222 requ
 | Property / Env var | Default | Purpose |
 |--------------------|---------|---------|
 | `IDEMPOTENCY_MASTER_KEY` | dev fallback (change in prod) | Base64-encoded 32-byte AES key for encrypting AES keys in idempotency records. Generate: `openssl rand -base64 32` |
-| `SPRING_REDIS_HOST` | `localhost` | Redis host |
-| `SPRING_REDIS_PORT` | `6379` | Redis port |
-| `SPRING_REDIS_PASSWORD` | — | Redis password |
+| `SPRING_DATA_REDIS_HOST` | `localhost` | Redis host |
+| `SPRING_DATA_REDIS_PORT` | `6379` | Redis port |
+| `SPRING_DATA_REDIS_PASSWORD` | — | Redis password |
 | `NATS_URL` | `nats://localhost:4222` | NATS broker |
 | `NATS_USER` / `NATS_PASS` | — | NATS credentials |
 | `app.auto-delete-days` | `2` | Message TTL in days |

@@ -1,23 +1,18 @@
 package com.secret_message.secret_message_app.utils;
 
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
-import javax.crypto.SecretKey;
-import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.KeySpec;
 import java.util.Arrays;
 import java.util.Base64;
 
@@ -28,13 +23,11 @@ import java.util.Base64;
  * The {@link SecretKeySpec} instances created inside encrypt/decrypt hold
  * JCE-internal copies that cannot be wiped; they are short-lived garbage.
  */
-@Service
+@Component
 public class CryptoUtil {
 
     private static final String ENCRYPTION_ALGORITHM = "AES";
     private static final String CIPHER_TRANSFORMATION = "AES/CBC/PKCS5Padding";
-    private static final String SECRET_KEY_FACTORY_ALGORITHM = "PBKDF2WithHmacSHA256";
-    private static final int ITERATION_COUNT = 65536;
     private static final int KEY_LENGTH = 256;
     private static final int IV_LENGTH = 16;
     private static final SecureRandom secureRandom = new SecureRandom();
@@ -103,20 +96,5 @@ public class CryptoUtil {
         byte[] keyBytes = new byte[KEY_LENGTH / 8];
         secureRandom.nextBytes(keyBytes);
         return keyBytes;
-    }
-
-    public SecretKey deriveKeyFromPassword(String password, byte[] salt)
-            throws NoSuchAlgorithmException, InvalidKeySpecException {
-
-        SecretKeyFactory factory = SecretKeyFactory.getInstance(SECRET_KEY_FACTORY_ALGORITHM);
-        KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
-        SecretKey secretKey = factory.generateSecret(spec);
-        return new SecretKeySpec(secretKey.getEncoded(), ENCRYPTION_ALGORITHM);
-    }
-
-    public byte[] generateSalt() {
-        byte[] salt = new byte[IV_LENGTH];
-        secureRandom.nextBytes(salt);
-        return salt;
     }
 }

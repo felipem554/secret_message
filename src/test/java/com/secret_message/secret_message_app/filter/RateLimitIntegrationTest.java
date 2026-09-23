@@ -9,6 +9,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -17,6 +18,10 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -45,8 +50,8 @@ class RateLimitIntegrationTest {
 
     @DynamicPropertySource
     static void containerProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.redis.host", redisContainer::getHost);
-        registry.add("spring.redis.port", () -> redisContainer.getMappedPort(6379));
+        registry.add("spring.data.redis.host", redisContainer::getHost);
+        registry.add("spring.data.redis.port", () -> redisContainer.getMappedPort(6379));
         registry.add("nats.server.url",
                 () -> "nats://" + natsContainer.getHost() + ":" + natsContainer.getMappedPort(4222));
     }
@@ -56,6 +61,9 @@ class RateLimitIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     private String createBody() throws Exception {
         return objectMapper.writeValueAsString(new CreateMessageRequest("rate limit test"));
@@ -104,5 +112,26 @@ class RateLimitIntegrationTest {
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.error").value("rate limit exceeded"));
+    }
+
+    // ─── Bucket state must not outlive its usefulness ────────────────────────
+
+    /**
+     * Without an expiration strategy Bucket4j stores bucket state with no TTL,
+     * so a key would be kept for every client IP ever seen. Runs last because
+     * it asserts on the state the earlier requests built up.
+     */
+    @Test
+    @Order(4)
+    void bucketState_carriesTtl() {
+        // ClientIpFilter falls back to 127.0.0.1 outside the prod profile.
+        Long ttlSeconds = redisTemplate.getExpire("ratelimit:127.0.0.1", TimeUnit.SECONDS);
+
+        assertNotNull(ttlSeconds);
+        assertTrue(ttlSeconds > 0,
+                "ratelimit key must expire; got TTL " + ttlSeconds
+                        + " (-1 means no TTL, -2 means no key)");
+        assertTrue(ttlSeconds <= 86_460,
+                "TTL must not exceed the refill window plus the grace margin; got " + ttlSeconds);
     }
 }

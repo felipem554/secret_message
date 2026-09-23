@@ -2,11 +2,11 @@ package com.secret_message.secret_message_app.cache;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Repository;
 
 import java.util.concurrent.TimeUnit;
 
-@Service
+@Repository
 public class RedisCacheManager {
 
     private final StringRedisTemplate redisTemplate;

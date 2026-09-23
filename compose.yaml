@@ -19,9 +19,9 @@ services:
       - redis
       - nats
     environment:
-      SPRING_REDIS_HOST: ${REDIS_HOST:-redis}
-      SPRING_REDIS_PORT: ${REDIS_PORT:-6379}
-      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT:-6379}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
       NATS_URL: ${NATS_URL:-nats://nats:4222}
       NATS_USER: ${NATS_USER:-natsuser}
       NATS_PASS: ${NATS_PASS:-natspassword}

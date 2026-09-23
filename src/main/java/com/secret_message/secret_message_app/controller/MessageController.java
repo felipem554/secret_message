@@ -4,12 +4,9 @@ import com.secret_message.secret_message_app.dto.CreateMessageRequest;
 import com.secret_message.secret_message_app.dto.CreateMessageResponse;
 import com.secret_message.secret_message_app.dto.RevealRequest;
 import com.secret_message.secret_message_app.dto.RevealResponse;
-import com.secret_message.secret_message_app.exception.InvalidRequestException;
 import com.secret_message.secret_message_app.exception.MessageNotAvailableException;
 import com.secret_message.secret_message_app.exception.PayloadTooLargeException;
-import com.secret_message.secret_message_app.idempotency.IdempotencyRecord;
-import com.secret_message.secret_message_app.idempotency.IdempotencyService;
-import com.secret_message.secret_message_app.model.SecretMessageIdentifier;
+import com.secret_message.secret_message_app.model.CreateMessageResult;
 import com.secret_message.secret_message_app.service.SecretMessageService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -26,8 +23,6 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Public HTTP API for the secret-message service.
@@ -36,6 +31,11 @@ import java.util.UUID;
  * - Message ID never appears in the URI — only in JSON bodies.
  * - Reveal is POST (not GET) because it is destructive.
  * - All reveal-failure cases return a uniform 404; see GlobalExceptionHandler.
+ *
+ * <p>This class only translates between HTTP and the service layer: request
+ * size limits, Base64 decoding of the client-supplied key, and status-code
+ * selection. Idempotency handling lives in {@link SecretMessageService} so
+ * that it is not tied to this transport.
  */
 @RestController
 @RequestMapping("/api/v1/messages")
@@ -43,7 +43,6 @@ import java.util.UUID;
 public class MessageController {
 
     private final SecretMessageService secretMessageService;
-    private final IdempotencyService idempotencyService;
 
     @Value("${app.max-message-size:1048576}")
     private long maxMessageSize;
@@ -68,41 +67,17 @@ public class MessageController {
             throw new PayloadTooLargeException(maxMessageSize);
         }
 
-        String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+        CreateMessageResult result = secretMessageService.createSecretMessage(body.message(), idempotencyKey);
 
-        if (normalizedIdempotencyKey != null) {
-            String bodyHash = idempotencyService.hashBody(body.message());
-            Optional<IdempotencyRecord> existing = idempotencyService.findExisting(normalizedIdempotencyKey, bodyHash);
-            if (existing.isPresent()) {
-                // recoverAesKey returns a fresh buffer; the response serializer wipes it.
-                byte[] recoveredKey = idempotencyService.recoverAesKey(existing.get());
-                return ResponseEntity.ok()
-                        .header("Cache-Control", "no-store")
-                        .body(new CreateMessageResponse(existing.get().messageId(), recoveredKey, true));
-            }
-        }
-
-        SecretMessageIdentifier identifier = secretMessageService.createSecretMessage(body.message());
-
-        if (normalizedIdempotencyKey != null) {
-            String bodyHash = idempotencyService.hashBody(body.message());
-            boolean stored = idempotencyService.store(
-                    normalizedIdempotencyKey, bodyHash, identifier.getMessageId(), identifier.getAeskey());
-            if (!stored) {
-                secretMessageService.discardSecretMessage(identifier.getMessageId());
-                identifier.wipe();
-                IdempotencyRecord existing = idempotencyService.findExisting(
-                        normalizedIdempotencyKey, bodyHash).orElseThrow();
-                byte[] recoveredKey = idempotencyService.recoverAesKey(existing);
-                return ResponseEntity.ok()
-                        .header("Cache-Control", "no-store")
-                        .body(new CreateMessageResponse(existing.messageId(), recoveredKey, true));
-            }
+        if (result.duplicate()) {
+            return ResponseEntity.ok()
+                    .header("Cache-Control", "no-store")
+                    .body(new CreateMessageResponse(result.messageId(), result.aesKey(), true));
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header("Cache-Control", "no-store")
-                .body(new CreateMessageResponse(identifier.getMessageId(), identifier.getAeskey()));
+                .body(new CreateMessageResponse(result.messageId(), result.aesKey()));
     }
 
     /**
@@ -144,21 +119,5 @@ public class MessageController {
         } catch (IllegalArgumentException e) {
             return null;
         }
-    }
-
-    private String normalizeIdempotencyKey(String idempotencyKey) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            return null;
-        }
-        String normalized = idempotencyKey.trim();
-        try {
-            UUID uuid = UUID.fromString(normalized);
-            if (uuid.version() != 4) {
-                throw new InvalidRequestException("idempotency key must be a UUIDv4");
-            }
-        } catch (IllegalArgumentException e) {
-            throw new InvalidRequestException("idempotency key must be a UUIDv4");
-        }
-        return normalized;
     }
 }

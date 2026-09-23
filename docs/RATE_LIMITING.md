@@ -41,9 +41,9 @@ app.rate-limit.requests-per-day=100
 Redis connection settings are shared with the rest of the app:
 
 ```properties
-spring.redis.host=${SPRING_REDIS_HOST:localhost}
-spring.redis.port=${SPRING_REDIS_PORT:6379}
-spring.redis.password=${SPRING_REDIS_PASSWORD:}
+spring.data.redis.host=${SPRING_DATA_REDIS_HOST:localhost}
+spring.data.redis.port=${SPRING_DATA_REDIS_PORT:6379}
+spring.data.redis.password=${SPRING_DATA_REDIS_PASSWORD:}
 ```
 
 ## Operational notes

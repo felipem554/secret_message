@@ -138,7 +138,7 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `IDEMPOTENCY_MASTER_KEY` | dev fallback | Base64-encoded 32-byte AES key. Generate: `openssl rand -base64 32`. Startup fails fast if this is still the dev fallback while `APP_ENV=production` (see `IdempotencyKeyVault`) |
 | `NATS_URL` | `nats://localhost:4222` | NATS broker URL |
 | `NATS_USER` / `NATS_PASS` | — | NATS auth (optional) |
-| `SPRING_REDIS_HOST/PORT/PASSWORD` | localhost:6379 | Redis connection |
+| `SPRING_DATA_REDIS_HOST/PORT/PASSWORD` | localhost:6379 | Redis connection |
 | `app.auto-delete-days` | `2` | Message TTL in days |
 | `app.max-tries` | `3` | Max failed decryption attempts |
 | `app.max-message-size` | `1048576` | Max message size in bytes (1 MB) |

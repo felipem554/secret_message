@@ -3,7 +3,6 @@ package com.secret_message.secret_message_app.utils;
 import org.junit.jupiter.api.Test;
 
 import javax.crypto.BadPaddingException;
-import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Base64;
@@ -108,30 +107,5 @@ class CryptoUtilTest {
         byte[] k2 = crypto.generateRandomAESKeyBytes();
 
         assertFalse(Arrays.equals(k1, k2), "Keys must be random and unique");
-    }
-
-    // ─── PBKDF2 key derivation ─────────────────────────────────────────────────
-
-    @Test
-    void deriveKeyFromPassword_deterministicWithSameSalt() throws Exception {
-        byte[] salt = crypto.generateSalt();
-
-        SecretKey k1 = crypto.deriveKeyFromPassword("password123", salt);
-        SecretKey k2 = crypto.deriveKeyFromPassword("password123", salt);
-
-        assertArrayEquals(k1.getEncoded(), k2.getEncoded(),
-                "Same password + salt must always produce the same derived key");
-    }
-
-    @Test
-    void deriveKeyFromPassword_differentSalt_producesDistinctKey() throws Exception {
-        byte[] salt1 = crypto.generateSalt();
-        byte[] salt2 = crypto.generateSalt();
-
-        SecretKey k1 = crypto.deriveKeyFromPassword("password123", salt1);
-        SecretKey k2 = crypto.deriveKeyFromPassword("password123", salt2);
-
-        assertFalse(Arrays.equals(k1.getEncoded(), k2.getEncoded()),
-                "Different salts must produce different derived keys");
     }
 }
