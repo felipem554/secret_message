@@ -22,12 +22,13 @@ import java.io.IOException;
  * and stashes it as a request attribute so {@link RateLimitFilter} can key
  * its bucket on it.
  *
- * <p>Behavior by profile:
+ * <p>Behavior by {@code app.env} (env {@code APP_ENV}), the same switch
+ * {@code IdempotencyKeyVault} and {@code docker-entrypoint.sh} use:
  * <ul>
- *   <li><b>prod</b>: rejects with HTTP 400 if the IP cannot be resolved
+ *   <li><b>production</b>: rejects with HTTP 400 if the IP cannot be resolved
  *       (null, empty, or 0.0.0.0). Catches misconfigured deployments where
  *       the reverse proxy is bypassed.</li>
- *   <li><b>any other profile</b>: falls back to 127.0.0.1 so local development
+ *   <li><b>anything else</b>: falls back to 127.0.0.1 so local development
  *       and the integration test suite work without a proxy in front.</li>
  * </ul>
  */
@@ -39,8 +40,11 @@ public class ClientIpFilter extends OncePerRequestFilter {
 
     private static final String PATH_PREFIX = "/api/";
 
-    @Value("${spring.profiles.active:default}")
-    private String activeProfile;
+    private final boolean production;
+
+    public ClientIpFilter(@Value("${app.env:development}") String appEnv) {
+        this.production = "production".equalsIgnoreCase(appEnv);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -54,7 +58,7 @@ public class ClientIpFilter extends OncePerRequestFilter {
         String ip = request.getRemoteAddr();
 
         if (ip == null || ip.isEmpty() || "0.0.0.0".equals(ip)) {
-            if (isProductionProfile()) {
+            if (production) {
                 response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
                 response.setHeader("Cache-Control", "no-store");
                 response.setContentType("application/json");
@@ -66,11 +70,5 @@ public class ClientIpFilter extends OncePerRequestFilter {
 
         request.setAttribute(CLIENT_IP_ATTRIBUTE, ip);
         chain.doFilter(request, response);
-    }
-
-    private boolean isProductionProfile() {
-        return activeProfile != null
-                && (activeProfile.equalsIgnoreCase("prod")
-                || activeProfile.equalsIgnoreCase("production"));
     }
 }

@@ -144,7 +144,7 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `app.max-message-size` | `1048576` | Max message size in bytes (1 MB) |
 | `app.rate-limit.requests-per-day` | `100` | HTTP API rate limit per client IP |
 | `JAVA_OPTS` | attach/JMX/heap-dump hardening flags | Extra JVM flags passed by `docker-entrypoint.sh` |
-| `APP_ENV` | `development` | Startup fails fast when `DEBUG=true` and `APP_ENV=production`, or when `APP_ENV=production` and `IDEMPOTENCY_MASTER_KEY` is still the dev fallback |
+| `APP_ENV` | `development` | `production` enables: startup fail-fast on `DEBUG=true` or the dev-fallback `IDEMPOTENCY_MASTER_KEY`, and HTTP 400 in `ClientIpFilter` for unresolvable client IPs. The single production switch — Spring profiles are not used |
 
 ## Ports
 
@@ -168,4 +168,6 @@ See `docs/MEMORY_HARDENING.md` for the operational key-material hardening plan a
 | `docs/RATE_LIMITING.md` | Rate limiting options and Bucket4j implementation notes |
 | `docs/RATE_LIMIT_RECOVERY.md` | Why the old rate-limit reset command failed and the correct procedure |
 | `docs/KUBERNETES.md` | Kubernetes deployment guide: Kustomize layout, ephemeral-Redis and NetworkPolicy rationale, why CloudNativePG doesn't apply |
+| `docs/SECRETS_HARDENING_PLAN.md` | Prod secrets inventory, gaps, and phased hardening plan (fail-closed guards, Redis/NATS ACL+TLS, External Secrets/SOPS, MIEK rotation) |
+| `docs/SCALING_PLAN.md` | Process/thread model, single-JVM tuning, and multi-process scaling behind nginx (compose + Kubernetes) |
 | `docs/PASSWORD_HASHING_SPEC.md` | Reference spec on password hashing/salting/peppering (Argon2id); applicability analysis for this project (no user passwords stored — not directly applicable, but MIEK/rate-limiting are structural parallels) |
