@@ -60,6 +60,7 @@ export function buildReport(scenario, data) {
   out.push(`=== secret_message load test: ${scenario} ===`);
   out.push(`profile=${PROFILE}  base=${BASE_URL}  git=${gitSha}  date=${date}`);
   if (__ENV.LABEL) out.push(`label: ${__ENV.LABEL}`);
+  out.push(`client IPs: ${__ENV.SPREAD_IPS === "1" ? "one per VU (X-Forwarded-For)" : "single (load generator's)"}`);
   if (__ENV.NOTE) out.push(`note: ${__ENV.NOTE}`);
   out.push("Latencies in ms, measured only during each hold window (warm-up/ramps excluded).");
   out.push("");
@@ -153,6 +154,7 @@ export function makeHandleSummary(scenario) {
       baseUrl: BASE_URL,
       gitSha: __ENV.GIT_SHA || null,
       label: __ENV.LABEL || null,
+      spreadIps: __ENV.SPREAD_IPS === "1",
       note: __ENV.NOTE || null,
       date,
       // Absolute epoch-ms windows let run.sh line up docker stats with stages.

@@ -4,7 +4,7 @@
 import http from "k6/http";
 import { check, fail, sleep } from "k6";
 import { Counter } from "k6/metrics";
-import { BASE_URL, THINK_TIME } from "./config.js";
+import { BASE_URL, SPREAD_IPS, THINK_TIME } from "./config.js";
 
 // 429s mean the limiter was not raised for the test (see README). Counted
 // separately so the run aborts instead of reporting rate-limiter numbers.
@@ -14,6 +14,16 @@ export const unexpectedStatus = new Counter("unexpected_status");
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
+// One fake client per VU, from 198.18.0.0/15 (RFC 2544, reserved for
+// benchmarks). Not a private range, so Tomcat's RemoteIpValve takes it as the
+// client instead of skipping it as another proxy. setup() runs as VU 0 and
+// keeps the real IP, so the pre-flight still checks the actual bucket.
+function requestHeaders(extra) {
+  const vu = __VU;
+  if (!SPREAD_IPS || !vu) return extra ? { ...JSON_HEADERS, ...extra } : JSON_HEADERS;
+  return { ...JSON_HEADERS, ...extra, "X-Forwarded-For": `198.18.${(vu >> 8) & 255}.${vu & 255}` };
+}
+
 function track(res, expected) {
   if (res.status === 429) rateLimited.add(1);
   if (!expected.includes(res.status)) unexpectedStatus.add(1, { status: String(res.status) });
@@ -21,7 +31,7 @@ function track(res, expected) {
 }
 
 export function createMessage(body, { idempotencyKey, endpoint = "create", expected = [201] } = {}) {
-  const headers = idempotencyKey ? { ...JSON_HEADERS, "Idempotency-Key": idempotencyKey } : JSON_HEADERS;
+  const headers = requestHeaders(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : null);
   const res = http.post(`${BASE_URL}/api/v1/messages`, body, {
     headers,
     tags: { endpoint, name: "POST /api/v1/messages" },
@@ -32,7 +42,7 @@ export function createMessage(body, { idempotencyKey, endpoint = "create", expec
 
 export function revealMessage(messageId, aesKey, { expected = [200] } = {}) {
   const res = http.post(`${BASE_URL}/api/v1/messages/reveal`, JSON.stringify({ messageId, aesKey }), {
-    headers: JSON_HEADERS,
+    headers: requestHeaders(),
     tags: { endpoint: "reveal", name: "POST /api/v1/messages/reveal" },
     responseCallback: http.expectedStatuses(...expected),
   });

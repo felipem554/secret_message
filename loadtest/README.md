@@ -44,6 +44,7 @@ VUs
 | `WARMUP` / `HOLD` | `30s` / `2m` | Per level |
 | `MAX_VUS` | `1000` | VU cap for `breakpoint` |
 | `THINK_TIME` | `0` | Seconds of sleep per iteration |
+| `SPREAD_IPS` | `0` | `1` gives every VU its own client IP (`X-Forwarded-For: 198.18.x.y`). See "One IP or many" below |
 | `MESSAGE_BYTES` | 200 (1 MiB − 14 for `create-1mb`) | Message size |
 | `CLEANUP` | `1` | `create-1mb` only: `0` skips the cleanup reveal. Redis then grows about 1.4 GB per 1,000 messages |
 | `N_PROCS` | `1` | Written into the results-log rows (Phase 2 runs) |
@@ -102,7 +103,7 @@ Per stage and endpoint:            (create-reveal, idempotent-create)
 Results-log rows (docs/SCALING_TICKETS.md; fill Run ID, CPU, Jedis, GC, OOM, notes):
 | | 2026-10-06 | | a9e32b5 | create-small | 10 | 1 | 812.3 | 1.1 | 3.0 | 4.2 | 0.00 | | | | | p90=2.4 |
 === app container during the run ===
-stage        cpu_avg%   cpu_max%  mem_max_MiB
+stage        cpu_avg%   cpu_max%  mem_max_MiB redis_cpu_avg redis_cpu_max
 ```
 
 - **Max throughput at a concurrency** is the `req/s` of the stage. The knee is
@@ -110,11 +111,14 @@ stage        cpu_avg%   cpu_max%  mem_max_MiB
 - CPU % is per core, so 400% means 4 cores busy. If CPU is well below the
   container's cores while p99 grows, the limit is somewhere else (the Jedis pool
   of 8, SerialGC pauses, Tomcat threads). That is exactly what Phase 1 targets.
+- `redis_cpu` is the Redis container. Redis runs commands on one thread, so
+  near 100% means Redis itself is the limit and no app-side pool or thread
+  setting will add throughput.
 - Files in `loadtest/results/` (gitignored). All four share one run name,
   `<ts>-[<LABEL>-]<scenario>-<profile>`:
   - `.json`: full k6 summary and per-stage numbers with absolute time windows
   - `.txt`: the full report, including the container CPU/memory table and the JVM exit state
-  - `-stats.csv`: raw `docker stats` samples
+  - `-stats.csv`: raw `docker stats` samples (app CPU and memory, Redis CPU)
   - `-env.txt`: what was under test: git SHA (`-dirty` plus the modified files when the
     tree has uncommitted changes), host CPUs/RAM, the container's image, CPU and memory
     limits, actual JVM command line and env vars (secret-looking values redacted)
@@ -137,6 +141,15 @@ exports the raised rate limit so restarts keep it, runs the scenarios with
 It stops if a pre-flight fails, and ends with a pass/fail line per scenario
 and the results-log rows of that invocation.
 
+It also protects the set from two things that silently skewed a real sweep
+(2026-10-11): it runs under `systemd-inhibit`, so the machine cannot suspend
+mid-stage (k6 freezes, and that stage's numbers are void), and it refuses to
+start on battery power (`ALLOW_BATTERY=1` overrides; the CPU is power-limited).
+It turns Redis RDB snapshots off for the set (`CONFIG SET save ""`), as the
+k8s deployment runs Redis; compose's default would fork a full snapshot every
+minute under load. `REDIS_SNAPSHOTS=1` keeps them. `-env.txt` records the power
+state and the Redis `save` setting of every run.
+
 Tuning variants get their own `LABEL`; anything `compose.yaml` reads is passed
 through to the container:
 
@@ -146,6 +159,14 @@ LABEL=T1-tomcat400 JAVA_OPTS="$HARDENING -Dserver.tomcat.threads.max=400" ./run-
 LABEL=T2-g1gc      JAVA_OPTS="$HARDENING -XX:+UseG1GC" ./run-all.sh
 LABEL=T1-tomcat400 JAVA_OPTS="$HARDENING -Dserver.tomcat.threads.max=400" ./run-all.sh create-small   # a subset
 ```
+
+The Redis pool size is `REDIS_POOL_MAX_TOTAL` (default 8):
+
+```bash
+SPREAD_IPS=1 REDIS_POOL_MAX_TOTAL=32 LABEL=P32 ./run-all.sh create-small create-reveal
+```
+
+Compare sets with `./compare.py` (all labels) or `./compare.py P8 P32 P64`.
 
 Setting `JAVA_OPTS` replaces the compose default, so repeat the hardening
 flags as above. Check `-env.txt` afterwards: its `jvm cmd` line is what
@@ -169,6 +190,28 @@ docker compose exec redis redis-cli -a redispassword --no-auth-warning FLUSHALL
 
 The Jedis waiters and GC pause columns need SCALE-3 (pool gauges and
 `-Xlog:gc`). Leave them empty for the baseline if SCALE-3 has not landed yet.
+
+## One IP or many
+
+Without `SPREAD_IPS`, every request comes from the load generator's IP, so
+every request updates the same Bucket4j bucket. Bucket4j updates it with an
+optimistic compare-and-swap (`GET`, then an `EVAL` that writes only if the
+value did not change), and a loser retries. The retries grow with the number of
+requests in flight at once, which is capped by the Redis pool size:
+
+| Pool | Client IPs | Redis calls per create | req/s at 100 VUs | Redis CPU |
+|---|---|---|---|---|
+| 64 | one | ~35 `GET` + ~17.5 `EVAL` | 373 | 103% (saturated) |
+| 64 | one per VU | 2 `GET` + 1 `EVAL` | 3,001 | 77% |
+
+(30 s holds, 2026-10-11.) Single-IP runs measure this retry storm, not the
+app. Use `SPREAD_IPS=1` for tuning runs, and single-IP only to study the
+worst case: one heavy client, or many users behind one NAT address.
+
+`SPREAD_IPS` relies on the app trusting `X-Forwarded-For` from private ranges
+(`server.tomcat.remoteip.internal-proxies`), which covers the Docker bridge and
+a LAN load generator. The same setting lets anyone on the LAN pick their own
+rate-limit bucket on a dev stack; production must list only the real proxy.
 
 ## Caveats
 
