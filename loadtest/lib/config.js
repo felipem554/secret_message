@@ -15,12 +15,18 @@
 //   HOLD          measured time per level            default 2m
 //   MAX_VUS       VU cap for `breakpoint`            default 1000
 //   THINK_TIME    seconds of sleep per iteration     default 0 (closed loop, max pressure)
+//   SPREAD_IPS    1 = one client IP per VU via X-Forwarded-For   default 0 (all from one IP)
 
 import exec from "k6/execution";
 
 export const BASE_URL = (__ENV.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 export const PROFILE = __ENV.PROFILE || "steps";
 export const THINK_TIME = parseFloat(__ENV.THINK_TIME || "0");
+// With one source IP every request updates the same Bucket4j bucket, and its
+// optimistic CAS retries grow with concurrency until they saturate Redis (a
+// test artifact: real traffic comes from many IPs). The app trusts
+// X-Forwarded-For from private ranges, which covers the Docker bridge and a LAN.
+export const SPREAD_IPS = __ENV.SPREAD_IPS === "1";
 
 const WARMUP_S = parseDuration(__ENV.WARMUP || "30s");
 const HOLD_S = parseDuration(__ENV.HOLD || "2m");

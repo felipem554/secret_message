@@ -53,7 +53,10 @@ container="${APP_CONTAINER:-$(docker compose -f "$repo/compose.yaml" ps -q app 2
   echo "host:      $(nproc) cpus, $(awk '/MemTotal/ {printf "%.1f GiB", $2/1048576}' /proc/meminfo)," \
        "$(lscpu 2>/dev/null | sed -n 's/^Model name: *//p')"
   echo "docker:    $(docker version -f '{{.Server.Version}}' 2>/dev/null || echo -)"
-  echo "k6 env:    $(for v in PROFILE STEPS RATES WARMUP HOLD MAX_VUS THINK_TIME MESSAGE_BYTES CLEANUP; do
+  echo "power:     ac=$({ cat /sys/class/power_supply/A{C,DP}*/online 2>/dev/null || true; } | sort -r | head -1)" \
+       "profile=$(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo -)" \
+       "governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo -)"
+  echo "k6 env:    $(for v in PROFILE STEPS RATES WARMUP HOLD MAX_VUS THINK_TIME MESSAGE_BYTES CLEANUP SPREAD_IPS; do
                        [[ -n "${!v:-}" ]] && printf '%s=%s ' "$v" "${!v}"; done)"
   if [[ -n "$container" ]]; then
     echo
@@ -61,6 +64,11 @@ container="${APP_CONTAINER:-$(docker compose -f "$repo/compose.yaml" ps -q app 2
     echo "image:     $(docker inspect -f '{{.Image}}' "$container")"
     docker inspect -f 'limits:    cpus={{.HostConfig.NanoCpus}} (1e9 = 1 cpu, 0 = none) cpu_quota={{.HostConfig.CpuQuota}} memory={{.HostConfig.Memory}} bytes (0 = none)' "$container"
     echo "jvm cmd:   $(docker exec "$container" cat /proc/1/cmdline 2>/dev/null | tr '\0' ' ' || echo -)"
+    redis_c="$(docker compose -f "$repo/compose.yaml" ps -q redis 2>/dev/null || true)"
+    if [[ -n "$redis_c" ]]; then
+      echo "redis:     save=\"$(docker exec "$redis_c" redis-cli -a "${REDIS_PASSWORD:-redispassword}" --no-auth-warning CONFIG GET save 2>/dev/null | sed -n 2p)\"" \
+           "keys=$(docker exec "$redis_c" redis-cli -a "${REDIS_PASSWORD:-redispassword}" --no-auth-warning DBSIZE 2>/dev/null)"
+    fi
     echo "env:"
     docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container" | sort |
       sed -E '/^$/d; s/^([^=]*(KEY|PASS|SECRET|TOKEN|CREDENTIAL)[^=]*)=.*/\1=<redacted>/I; s/^/  /'
@@ -70,10 +78,19 @@ container="${APP_CONTAINER:-$(docker compose -f "$repo/compose.yaml" ps -q app 2
 sampler_pid=""
 if [[ -n "$container" ]]; then
   restarts_before="$(docker inspect -f '{{.RestartCount}}' "$container")"
-  echo "epoch_ms,cpu_pct,mem_mib" > "$stats_csv"
+  # Redis runs commands on one thread: redis_cpu_pct near 100 means Redis
+  # itself is the limit, whatever the app's pool or thread settings.
+  redis_container="${REDIS_CONTAINER:-$(docker compose -f "$repo/compose.yaml" ps -q redis 2>/dev/null || true)}"
+  echo "epoch_ms,cpu_pct,mem_mib,redis_cpu_pct" > "$stats_csv"
   (
     while docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; do
-      line="$(docker stats --no-stream --format '{{.CPUPerc}},{{.MemUsage}}' "$container" 2>/dev/null)" || break
+      out="$(docker stats --no-stream --format '{{.Container}},{{.CPUPerc}},{{.MemUsage}}' \
+               "$container" ${redis_container:+"$redis_container"} 2>/dev/null)" || break
+      line="$(grep "^$container," <<<"$out" | cut -d, -f2-)"
+      redis_cpu="-"
+      if [[ -n "$redis_container" ]]; then
+        redis_cpu="$(grep "^$redis_container," <<<"$out" | cut -d, -f2)"; redis_cpu="${redis_cpu%\%}"
+      fi
       cpu="${line%%,*}"; cpu="${cpu%\%}"
       mem="${line#*,}"; mem="${mem%% /*}"
       # MemUsage looks like "312.4MiB" or "1.02GiB"
@@ -82,7 +99,7 @@ if [[ -n "$container" ]]; then
         *MiB) mem="${mem%MiB}" ;;
         *KiB) mem="$(awk -v m="${mem%KiB}" 'BEGIN{printf "%.1f", m/1024}')" ;;
       esac
-      echo "$(date +%s%3N),$cpu,$mem" >> "$stats_csv"
+      echo "$(date +%s%3N),$cpu,$mem,${redis_cpu:--}" >> "$stats_csv"
     done
   ) &
   sampler_pid=$!
@@ -91,7 +108,7 @@ else
 fi
 
 forward_vars=(BASE_URL PROFILE STEPS RATES WARMUP HOLD MAX_VUS THINK_TIME MESSAGE_BYTES MAX_MESSAGE_SIZE
-              MIN_RATE_LIMIT_REMAINING CLEANUP GIT_SHA NOTE LABEL N_PROCS RESULTS_DIR RUN_NAME)
+              MIN_RATE_LIMIT_REMAINING CLEANUP GIT_SHA NOTE LABEL N_PROCS RESULTS_DIR RUN_NAME SPREAD_IPS)
 
 set +e
 if command -v k6 >/dev/null 2>&1; then
@@ -115,12 +132,19 @@ if [[ -n "$container" ]]; then {
   echo "=== app container during the run ($(docker inspect -f '{{.Name}}' "$container" | tr -d /)) ==="
   summary_json="$base.json"
   if [[ -s "$summary_json" && -s "$stats_csv" ]]; then
-    printf '%-10s %10s %10s %12s\n' stage cpu_avg% cpu_max% mem_max_MiB
+    printf '%-10s %10s %10s %12s %12s %12s\n' stage cpu_avg% cpu_max% mem_max_MiB redis_cpu_avg redis_cpu_max
     jq -r '.stages[] | select(.startMs != null) | "\(.name) \(.startMs) \(.endMs)"' "$summary_json" |
       while read -r name start end; do
         awk -F, -v s="$start" -v e="$end" -v n="$name" '
-          NR > 1 && $1 >= s && $1 < e { c += $2; k++; if ($2 > cm) cm = $2; if ($3 > mm) mm = $3 }
-          END { if (k) printf "%-10s %10.1f %10.1f %12.1f\n", n, c / k, cm, mm; else printf "%-10s %10s\n", n, "no samples" }
+          NR > 1 && $1 >= s && $1 < e {
+            c += $2; k++; if ($2 > cm) cm = $2; if ($3 > mm) mm = $3
+            if ($4 != "" && $4 != "-") { r += $4; rk++; if ($4 > rm) rm = $4 }
+          }
+          END {
+            if (!k) { printf "%-10s %10s\n", n, "no samples"; exit }
+            printf "%-10s %10.1f %10.1f %12.1f", n, c / k, cm, mm
+            if (rk) printf " %12.1f %12.1f\n", r / rk, rm; else printf " %12s %12s\n", "-", "-"
+          }
         ' "$stats_csv"
       done
     echo "(CPU % is of one core: 400% = 4 cores busy. Raw samples: ${stats_csv#"$repo/"})"

@@ -22,6 +22,8 @@ services:
       SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
       SPRING_DATA_REDIS_PORT: ${REDIS_PORT:-6379}
       SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
+      # Jedis pool size (app.redis.pool.max-total); tuned with loadtest/run-all.sh
+      REDIS_POOL_MAX_TOTAL: ${REDIS_POOL_MAX_TOTAL:-8}
       NATS_URL: ${NATS_URL:-nats://nats:4222}
       NATS_USER: ${NATS_USER:-natsuser}
       NATS_PASS: ${NATS_PASS:-natspassword}

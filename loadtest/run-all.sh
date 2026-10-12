@@ -21,7 +21,24 @@
 #   SETTLE                        default 15; seconds to wait after the app is
 #                                 healthy, before the next scenario
 #   HEALTH_TIMEOUT                default 180; seconds to wait for the app
+#   ALLOW_BATTERY                 default 0; 1 runs on a laptop on battery
+#   REDIS_SNAPSHOTS               default 0: RDB snapshots off for the set, as
+#                                 in k8s (--save ""). 1 keeps compose's default
+#
+# The set runs under systemd-inhibit, so the machine cannot suspend mid-run.
 set -euo pipefail
+
+# A suspend freezes k6 mid-stage and voids that stage; battery power caps the
+# CPU. Both happened in a real sweep (2026-10-11) and skewed it silently.
+if [[ -z "${RUN_ALL_INHIBITED:-}" ]] && command -v systemd-inhibit >/dev/null 2>&1; then
+  exec systemd-inhibit --what=sleep:idle --who=run-all.sh --why="load test ${LABEL:-}" \
+    env RUN_ALL_INHIBITED=1 "$0" "$@"
+fi
+on_ac="$(cat /sys/class/power_supply/A{C,DP}*/online 2>/dev/null | sort -r | head -1 || true)"
+if [[ "$on_ac" == 0 && "${ALLOW_BATTERY:-0}" != 1 ]]; then
+  echo "on battery: CPU is power-limited and results are not comparable. Plug in, or set ALLOW_BATTERY=1" >&2
+  exit 3
+fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
@@ -64,6 +81,10 @@ echo "=== starting stack (LABEL=$LABEL) ==="
 wait_healthy
 if [[ "${FLUSH:-1}" == 1 ]]; then
   "${compose[@]}" exec -T redis redis-cli -a "${REDIS_PASSWORD:-redispassword}" --no-auth-warning FLUSHALL
+fi
+if [[ "${REDIS_SNAPSHOTS:-0}" != 1 ]]; then
+  # Runtime only: a Redis restart brings compose's default back
+  "${compose[@]}" exec -T redis redis-cli -a "${REDIS_PASSWORD:-redispassword}" --no-auth-warning CONFIG SET save "" >/dev/null
 fi
 sleep "${SETTLE:-15}"
 
