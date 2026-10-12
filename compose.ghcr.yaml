@@ -29,6 +29,9 @@ services:
       IDEMPOTENCY_MASTER_KEY: ${IDEMPOTENCY_MASTER_KEY:-ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=}
       DEBUG: ${DEBUG:-false}
       APP_ENV: ${APP_ENV:-development}
+      # Per-IP daily request limit. Raise only for load tests
+      # (loadtest/README.md); unset keeps the production default of 100.
+      APP_RATELIMIT_REQUESTSPERDAY: ${APP_RATELIMIT_REQUESTSPERDAY:-100}
       JAVA_OPTS: ${JAVA_OPTS:--XX:+DisableAttachMechanism -XX:+ExitOnOutOfMemoryError -XX:-HeapDumpOnOutOfMemoryError -Dcom.sun.management.jmxremote=false}
     ulimits:
       core:

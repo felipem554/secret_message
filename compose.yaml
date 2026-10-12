@@ -28,6 +28,9 @@ services:
       IDEMPOTENCY_MASTER_KEY: ${IDEMPOTENCY_MASTER_KEY:-ZGV2ZWxvcG1lbnQtbWFzdGVyLWtleS0zMi1ieXRlcy0=}
       DEBUG: ${DEBUG:-false}
       APP_ENV: ${APP_ENV:-development}
+      # Per-IP daily request limit. Raise only for load tests
+      # (loadtest/README.md); unset keeps the production default of 100.
+      APP_RATELIMIT_REQUESTSPERDAY: ${APP_RATELIMIT_REQUESTSPERDAY:-100}
       # Memory hardening defaults (docs/MEMORY_HARDENING.md): no dynamic
       # attach (jmap/jcmd/agents), no remote JMX, die instead of writing a
       # heap dump on OOM. Override JAVA_OPTS to relax locally.
